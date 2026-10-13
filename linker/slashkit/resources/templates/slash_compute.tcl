@@ -32,6 +32,7 @@ delete_bd_objs [get_bd_cells ]
 delete_bd_objs [get_bd_intf_nets]
 delete_bd_objs [get_bd_nets]
 update_compile_order -fileset sources_1
+{% if hbm_axi_ports|default(true) %}
   {% raw %}
   set_property APERTURES {{0x40_0000_0000 1G}} [get_bd_intf_ports HBM_AXI_00]
   set_property APERTURES {{0x40_0000_0000 1G}} [get_bd_intf_ports HBM_AXI_01]
@@ -97,7 +98,9 @@ update_compile_order -fileset sources_1
   set_property APERTURES {{0x47_8000_0000 1G}} [get_bd_intf_ports HBM_AXI_61]
   set_property APERTURES {{0x47_C000_0000 1G}} [get_bd_intf_ports HBM_AXI_62]
   set_property APERTURES {{0x47_C000_0000 1G}} [get_bd_intf_ports HBM_AXI_63]
-  set_property APERTURES {{0x0 2G} {0x40_0000_0000 1G} {0x40_4000_0000 1G} {0x40_8000_0000 1G} {0x40_C000_0000 1G} {0x41_0000_0000 1G} {0x41_4000_0000 1G} {0x41_8000_0000 1G} {0x41_C000_0000 1G} {0x42_0000_0000 1G} {0x42_4000_0000 1G} {0x42_8000_0000 1G} {0x42_C000_0000 1G} {0x43_0000_0000 1G} {0x43_4000_0000 1G} {0x43_8000_0000 1G} {0x43_C000_0000 1G} {0x44_0000_0000 1G} {0x44_4000_0000 1G} {0x44_8000_0000 1G} {0x44_C000_0000 1G} {0x45_0000_0000 1G} {0x45_4000_0000 1G} {0x45_8000_0000 1G} {0x45_C000_0000 1G} {0x46_0000_0000 1G} {0x46_4000_0000 1G} {0x46_8000_0000 1G} {0x46_C000_0000 1G} {0x47_0000_0000 1G} {0x47_4000_0000 1G} {0x47_8000_0000 1G} {0x47_C000_0000 1G} {0x500_8000_0000 2G} {0x600_0000_0000 32G}} [get_bd_intf_ports HBM_VNOC_INI_00]
+  {% endraw %}
+{% endif %}
+  {% raw %}  set_property APERTURES {{0x0 2G} {0x40_0000_0000 1G} {0x40_4000_0000 1G} {0x40_8000_0000 1G} {0x40_C000_0000 1G} {0x41_0000_0000 1G} {0x41_4000_0000 1G} {0x41_8000_0000 1G} {0x41_C000_0000 1G} {0x42_0000_0000 1G} {0x42_4000_0000 1G} {0x42_8000_0000 1G} {0x42_C000_0000 1G} {0x43_0000_0000 1G} {0x43_4000_0000 1G} {0x43_8000_0000 1G} {0x43_C000_0000 1G} {0x44_0000_0000 1G} {0x44_4000_0000 1G} {0x44_8000_0000 1G} {0x44_C000_0000 1G} {0x45_0000_0000 1G} {0x45_4000_0000 1G} {0x45_8000_0000 1G} {0x45_C000_0000 1G} {0x46_0000_0000 1G} {0x46_4000_0000 1G} {0x46_8000_0000 1G} {0x46_C000_0000 1G} {0x47_0000_0000 1G} {0x47_4000_0000 1G} {0x47_8000_0000 1G} {0x47_C000_0000 1G} {0x500_8000_0000 2G} {0x600_0000_0000 32G}} [get_bd_intf_ports HBM_VNOC_INI_00]
   set_property APERTURES {{0x0 2G} {0x40_0000_0000 1G} {0x40_4000_0000 1G} {0x40_8000_0000 1G} {0x40_C000_0000 1G} {0x41_0000_0000 1G} {0x41_4000_0000 1G} {0x41_8000_0000 1G} {0x41_C000_0000 1G} {0x42_0000_0000 1G} {0x42_4000_0000 1G} {0x42_8000_0000 1G} {0x42_C000_0000 1G} {0x43_0000_0000 1G} {0x43_4000_0000 1G} {0x43_8000_0000 1G} {0x43_C000_0000 1G} {0x44_0000_0000 1G} {0x44_4000_0000 1G} {0x44_8000_0000 1G} {0x44_C000_0000 1G} {0x45_0000_0000 1G} {0x45_4000_0000 1G} {0x45_8000_0000 1G} {0x45_C000_0000 1G} {0x46_0000_0000 1G} {0x46_4000_0000 1G} {0x46_8000_0000 1G} {0x46_C000_0000 1G} {0x47_0000_0000 1G} {0x47_4000_0000 1G} {0x47_8000_0000 1G} {0x47_C000_0000 1G} {0x500_8000_0000 2G} {0x600_0000_0000 32G}} [get_bd_intf_ports HBM_VNOC_INI_01]
   set_property APERTURES {{0x0 2G} {0x40_0000_0000 1G} {0x40_4000_0000 1G} {0x40_8000_0000 1G} {0x40_C000_0000 1G} {0x41_0000_0000 1G} {0x41_4000_0000 1G} {0x41_8000_0000 1G} {0x41_C000_0000 1G} {0x42_0000_0000 1G} {0x42_4000_0000 1G} {0x42_8000_0000 1G} {0x42_C000_0000 1G} {0x43_0000_0000 1G} {0x43_4000_0000 1G} {0x43_8000_0000 1G} {0x43_C000_0000 1G} {0x44_0000_0000 1G} {0x44_4000_0000 1G} {0x44_8000_0000 1G} {0x44_C000_0000 1G} {0x45_0000_0000 1G} {0x45_4000_0000 1G} {0x45_8000_0000 1G} {0x45_C000_0000 1G} {0x46_0000_0000 1G} {0x46_4000_0000 1G} {0x46_8000_0000 1G} {0x46_C000_0000 1G} {0x47_0000_0000 1G} {0x47_4000_0000 1G} {0x47_8000_0000 1G} {0x47_C000_0000 1G} {0x500_8000_0000 2G} {0x600_0000_0000 32G}} [get_bd_intf_ports HBM_VNOC_INI_02]
   set_property APERTURES {{0x0 2G} {0x40_0000_0000 1G} {0x40_4000_0000 1G} {0x40_8000_0000 1G} {0x40_C000_0000 1G} {0x41_0000_0000 1G} {0x41_4000_0000 1G} {0x41_8000_0000 1G} {0x41_C000_0000 1G} {0x42_0000_0000 1G} {0x42_4000_0000 1G} {0x42_8000_0000 1G} {0x42_C000_0000 1G} {0x43_0000_0000 1G} {0x43_4000_0000 1G} {0x43_8000_0000 1G} {0x43_C000_0000 1G} {0x44_0000_0000 1G} {0x44_4000_0000 1G} {0x44_8000_0000 1G} {0x44_C000_0000 1G} {0x45_0000_0000 1G} {0x45_4000_0000 1G} {0x45_8000_0000 1G} {0x45_C000_0000 1G} {0x46_0000_0000 1G} {0x46_4000_0000 1G} {0x46_8000_0000 1G} {0x46_C000_0000 1G} {0x47_0000_0000 1G} {0x47_4000_0000 1G} {0x47_8000_0000 1G} {0x47_C000_0000 1G} {0x500_8000_0000 2G} {0x600_0000_0000 32G}} [get_bd_intf_ports HBM_VNOC_INI_03]
@@ -641,6 +644,7 @@ update_compile_order -fileset sources_1
   ] $ilreduced_logic_0
 
 
+{% if rm_reset_bufg|default(true) %}
   # Create instance: util_ds_buf_0, and set properties
   set util_ds_buf_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:util_ds_buf:2.2 util_ds_buf_0 ]
   set_property CONFIG.C_BUF_TYPE {BUFG_FABRIC} $util_ds_buf_0
@@ -653,6 +657,13 @@ update_compile_order -fileset sources_1
 
   connect_bd_net -net c_shift_ram_0_Q  [get_bd_pins c_shift_ram_0/Q] \
   [get_bd_pins util_ds_buf_0/BUFG_FABRIC_I]
+{% else %}
+  connect_bd_net -net arstn_1  [get_bd_ports arstn] \
+  [get_bd_pins c_shift_ram_0/D]
+
+  connect_bd_net -net c_shift_ram_0_Q  [get_bd_pins c_shift_ram_0/Q] \
+  [get_bd_pins ilreduced_logic_0/Op1]
+{% endif %}
 
 
   # Create interface connections
@@ -966,6 +977,25 @@ connect_bd_intf_net [get_bd_intf_pins {{ debug_axis_ila_name }}/{{ s.slot_pin }}
 {% endfor %}
 {% endif %}
 
+{% if not rm_reset_bufg|default(true) %}
+set _rst_kernels [list{% for name in instances %} {{ name }}{% endfor %}]
+set _rst_net [get_bd_nets -of_objects [get_bd_pins ilreduced_logic_0/Res]]
+set _rst_groups [dict create]
+foreach _pin [get_bd_pins -of_objects $_rst_net] {
+    if {[get_property DIR $_pin] ne "I"} { continue }
+    set _cell [get_property NAME [get_bd_cells -of_objects $_pin]]
+    set _grp [expr {[lsearch -exact $_rst_kernels $_cell] >= 0 ? $_cell : "infra"}]
+    dict lappend _rst_groups $_grp $_pin
+}
+dict for {_grp _pins} $_rst_groups {
+    set _repl [create_bd_cell -type ip -vlnv xilinx.com:ip:c_shift_ram:12.0 rst_repl_${_grp}]
+    set_property -dict [list CONFIG.Depth {1} CONFIG.Width {1}] $_repl
+    connect_bd_net [get_bd_ports user_clk] [get_bd_pins $_repl/CLK]
+    foreach _pin $_pins { disconnect_bd_net $_rst_net $_pin }
+    connect_bd_net [get_bd_pins ilreduced_logic_0/Res] [get_bd_pins $_repl/D]
+    connect_bd_net [get_bd_pins $_repl/Q] {*}$_pins
+}
+{% endif %}
 # === AXI-Lite address map ===
 {% for a in axilite_addr %}
 assign_bd_address -offset {{ "0x%012X"|format(a.offset) }} -range {{ "0x%08X"|format(a.range)  }} -target_address_space [get_bd_addr_spaces {{ a.addr_space }}] [get_bd_addr_segs {{ a.inst }}/{{ a.busif }}/{{ a.segment }}] -force

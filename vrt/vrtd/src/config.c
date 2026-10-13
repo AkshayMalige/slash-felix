@@ -654,6 +654,13 @@ static int parse_config_callback(void *user, const char *section, const char *na
         }
     } else if (MATCH("", "enable-mock-device")) {
         state->config->mock_device = string_to_bool(value);
+    } else if (MATCH("", "ddr-size")) {
+        uint64_t bytes = 0;
+        if (string_to_size_bytes(value, &bytes) != 0) {
+            LOG(LOG_ERR, "Invalid ddr-size '%s' (expected e.g. 14G, 14336M or a byte count)", value);
+            return 0;
+        }
+        state->config->ddr_size = bytes;
     } else if (MATCH_OBJECT("role", objname)) {
         /* Check if objname contains a device selector (e.g. "admin:0000:03:00").
          * Role names must not contain colons, so the first colon in objname

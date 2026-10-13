@@ -94,6 +94,7 @@ struct hbm_region_data {
 struct device_memory_map {
     /** @brief Subregion ownership data for all DDR regions. */
     struct ddr_region_data ddr_regions[DDR_REGIONS];
+    size_t ddr_region_count;
     /** @brief Subregion ownership data for all HBM regions. */
     struct hbm_region_data hbm_regions[HBM_REGIONS];
 };
@@ -109,6 +110,12 @@ enum allocation_type {
     /** @brief Allocate from HBM memory via VNOC (auto region selection). */
     ALLOCATION_TYPE_HBM_VNOC,
 };
+
+#define DDR_DEFAULT_SIZE ((uint64_t)DDR_REGIONS * REGION_SIZE)
+
+int allocator_set_ddr_size(uint64_t bytes);
+
+uint64_t allocator_get_ddr_size(void);
 
 /**
  * @brief Allocate and zero-initialize a device memory map.

@@ -19,7 +19,7 @@
 # ##################################################################################################
 
 proc _slash_usage {} {
-    return "Expected -tclargs: --project-name <name> --ip-repo <path> --static-shell-dcp <path> --base-bd <path> --linker-results-dir <path> --rm-work-dir <path> --artifact-out-dir <path> --util-report-file <path> --jobs <n> --pre-synth-tcl <path> ..."
+    return "Expected -tclargs: --project-name <name> --ip-repo <path> --static-shell-dcp <path> --base-bd <path> --linker-results-dir <path> --rm-work-dir <path> --artifact-out-dir <path> --util-report-file <path> --jobs <n> --part <fpga-part> --pre-synth-tcl <path> ..."
 }
 
 proc _require_file {path label} {
@@ -44,8 +44,10 @@ array set opts {
     --artifact-out-dir ""
     --util-report-file ""
     --user-clock-xdc ""
+    --user-clock-impl-tcl ""
     --user-clock-hz ""
     --jobs 8
+    --part xcv80-lsva4737-2MHP-e-S
 }
 
 set pre_synth_tcls [list]
@@ -95,6 +97,10 @@ set user_clock_xdc $opts(--user-clock-xdc)
 if {$user_clock_xdc ne ""} {
     set user_clock_xdc [file normalize $user_clock_xdc]
 }
+set user_clock_impl_tcl $opts(--user-clock-impl-tcl)
+if {$user_clock_impl_tcl ne ""} {
+    set user_clock_impl_tcl [file normalize $user_clock_impl_tcl]
+}
 set user_clock_hz $opts(--user-clock-hz)
 if {$user_clock_hz ne "" && ![string is integer -strict $user_clock_hz]} {
     error "Value for '--user-clock-hz' must be an integer, got '$user_clock_hz'."
@@ -134,7 +140,7 @@ puts "PRE-SYNTH TCLS:    $pre_synth_tcls"
 set slash_proj_name "slash_${proj_name}"
 set slash_rm_name "${slash_proj_name}_rm"
 
-create_project $slash_proj_name $rm_work_dir -part xcv80-lsva4737-2MHP-e-S -force
+create_project $slash_proj_name $rm_work_dir -part $opts(--part) -force
 
 set_property ip_repo_paths [list $ip_repo] [current_project]
 update_ip_catalog
@@ -199,6 +205,16 @@ if {$user_clock_xdc ne ""} {
     add_files -fileset constrs_1 -norecurse $user_clock_xdc
     set_property USED_IN {synthesis implementation} [get_files $user_clock_xdc]
     set_property SCOPED_TO_CELLS {top_i/slash} [get_files $user_clock_xdc]
+}
+
+if {$user_clock_impl_tcl ne ""} {
+    puts "Applying user-clock-at-source constraint: $user_clock_impl_tcl"
+    _require_file $user_clock_impl_tcl "user-clock-at-source Tcl"
+    if {$user_clock_xdc ne ""} {
+        set_property USED_IN {synthesis} [get_files $user_clock_xdc]
+    }
+    add_files -fileset constrs_1 -norecurse $user_clock_impl_tcl
+    set_property USED_IN {implementation} [get_files $user_clock_impl_tcl]
 }
 
 launch_runs "${slash_rm_name}_synth_1" -jobs $jobs

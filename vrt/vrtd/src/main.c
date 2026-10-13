@@ -86,6 +86,16 @@ int main(void)
         exit(EXIT_FAILURE);
     }
 
+    if (state.config->ddr_size != 0) {
+        if (allocator_set_ddr_size(state.config->ddr_size) != 0) {
+            LOG(LOG_CRIT, "Invalid ddr-size %llu: must be a non-zero multiple of 512 MB and at most %llu",
+                (unsigned long long)state.config->ddr_size, (unsigned long long)DDR_DEFAULT_SIZE);
+            exit(EXIT_FAILURE);
+        }
+    }
+    LOG(LOG_INFO, "DDR size for buffer allocation: %llu MB",
+        (unsigned long long)(allocator_get_ddr_size() >> 20));
+
     ret = devices_discover_and_open(&state.devices);
     if (ret == -1) {
         LOG(LOG_CRIT, "Failed to load devices");

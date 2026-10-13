@@ -244,6 +244,8 @@ struct config {
 
     /** @brief If true, use mock devices instead of real hardware (for testing). */
     bool mock_device;
+
+    uint64_t ddr_size;
 };
 
 /**

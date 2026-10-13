@@ -37,6 +37,7 @@ DEB_PACKAGES=(
     slash-dev
     slash-sim-emu
     slash-sim-emu-dev
+    slash-sysemu
     slash-dkms
     libslash
     libslash-dev
@@ -56,6 +57,7 @@ RPM_PACKAGES=(
     slash-devel
     slash-sim-emu
     slash-sim-emu-devel
+    slash-sysemu
     slash-dkms
     libslash
     libslash-devel

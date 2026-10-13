@@ -32,6 +32,7 @@ from contextlib import ExitStack
 
 from slashkit.emit.metadata.report_util import convert_report_utilization_to_xml
 from slashkit.emit.render import export_package
+from slashkit.core.board import BoardProfile
 from slashkit.core.command_config import (
     LinkerConfiguration,
     InstallerConfiguration,
@@ -518,6 +519,47 @@ def _generate_user_clock_xdc(
     return xdc_path
 
 
+_USER_CLOCK_AT_SOURCE_TCL = """\
+set _slash_target_hz {hz}
+set _slash_shell_clk [get_clocks -of_objects [get_pins top_i/slash/user_clk]]
+if {{[llength $_slash_shell_clk] != 1}} {{
+    error "user_clock_at_source: expected one clock on top_i/slash/user_clk, found '$_slash_shell_clk'"
+}}
+set _slash_out_pin [get_pins [get_property SOURCE_PINS $_slash_shell_clk]]
+set _slash_ref_pin [get_pins [get_property SOURCE $_slash_shell_clk]]
+set _slash_ref_clk [get_clocks -of_objects $_slash_ref_pin]
+if {{[llength $_slash_out_pin] != 1 || [llength $_slash_ref_pin] != 1 || [llength $_slash_ref_clk] != 1}} {{
+    error "user_clock_at_source: '$_slash_shell_clk' is not a generated clock with a single source clock"
+}}
+set _slash_ref_hz [expr {{1e9 / [get_property PERIOD $_slash_ref_clk]}}]
+set _slash_best {{}}
+for {{set _d 1}} {{$_d <= 1000}} {{incr _d}} {{
+    set _m [expr {{int(ceil($_slash_target_hz * $_d / $_slash_ref_hz - 1e-9))}}]
+    set _e [expr {{($_m * $_slash_ref_hz / $_d - $_slash_target_hz) / $_slash_target_hz}}]
+    if {{$_slash_best eq "" || $_e < [lindex $_slash_best 2]}} {{ set _slash_best [list $_m $_d $_e] }}
+    if {{$_e < 1e-6}} {{ break }}
+}}
+lassign $_slash_best _slash_mul _slash_div _slash_err
+if {{$_slash_err > 1e-3}} {{
+    error "user_clock_at_source: no multiply/divide within 0.1% of $_slash_target_hz Hz from $_slash_ref_clk"
+}}
+puts "slashkit: user_clk = $_slash_ref_clk x$_slash_mul/$_slash_div at $_slash_out_pin (replaces $_slash_shell_clk)"
+create_generated_clock -name user_clk -source $_slash_ref_pin \\
+    -multiply_by $_slash_mul -divide_by $_slash_div $_slash_out_pin
+"""
+
+
+def _generate_user_clock_source_tcl(
+    config: LinkerConfiguration, target_hz: int
+) -> Path:
+    tcl_path = config.build_dir / "user_clock_at_source.tcl"
+    tcl_path.write_text(_USER_CLOCK_AT_SOURCE_TCL.format(hz=int(target_hz)),
+                        encoding="utf-8")
+    logger.info("Wrote user-clock-at-source constraint (%d Hz) to %s",
+                target_hz, tcl_path)
+    return tcl_path
+
+
 def _run_rm_build(config: LinkerConfiguration, rm_kind: RM_KIND) -> None:
     # Copy all base IP cores into the ip repository
     config.ip_repository.mkdir(parents=True, exist_ok=True)
@@ -609,6 +651,8 @@ def _run_rm_build(config: LinkerConfiguration, rm_kind: RM_KIND) -> None:
             )
             util_report_path.parent.mkdir(parents=True, exist_ok=True)
             cmd.extend(["--util-report-file", str(util_report_path)])
+            board = getattr(config, "board", None) or BoardProfile()
+            cmd.extend(["--part", board.part])
 
             for path in config.pre_synth_tcls:
                 cmd.extend(["--pre-synth-tcl", str(path)])
@@ -619,9 +663,17 @@ def _run_rm_build(config: LinkerConfiguration, rm_kind: RM_KIND) -> None:
             # constrains the implementation run.
             target_hz = _resolve_target_user_clock_hz(config)
             if target_hz is not None:
+                if board.max_user_clock_hz and target_hz > board.max_user_clock_hz:
+                    raise ValueError(
+                        f"Kernel clock {target_hz} Hz is above {board.max_user_clock_hz} Hz, the "
+                        f"highest kernel clock the installed '{board.name}' static shell is "
+                        "signed off for (board.json max_user_clock_hz).")
                 cmd.extend(["--user-clock-hz", str(target_hz)])
                 user_clock_xdc = _generate_user_clock_xdc(config, target_hz)
                 cmd.extend(["--user-clock-xdc", str(user_clock_xdc)])
+                if board.user_clock_at_source:
+                    cmd.extend(["--user-clock-impl-tcl",
+                                str(_generate_user_clock_source_tcl(config, target_hz))])
 
         if rm_kind == RM_KIND.SERVICE_LAYER:
             opt_post_tcl = stack.enter_context(

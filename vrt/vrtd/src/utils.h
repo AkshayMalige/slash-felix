@@ -68,6 +68,7 @@
 #ifndef VRTD_UTILS_H
 #define VRTD_UTILS_H
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -341,6 +342,48 @@ void cleanup_argv(char ***p) {
     free(ptr);
 
     *p = NULL;
+}
+
+static inline
+int string_to_size_bytes(const char *s, uint64_t *out)
+{
+    if (unlikely(!s || !out)) {
+        return -1;
+    }
+    while (isspace((unsigned char)*s)) {
+        s++;
+    }
+    if (!isdigit((unsigned char)*s)) {
+        return -1;
+    }
+    errno = 0;
+    char *end = NULL;
+    unsigned long long value = strtoull(s, &end, 10);
+    if (errno != 0) {
+        return -1;
+    }
+    unsigned shift = 0;
+    switch (toupper((unsigned char)*end)) {
+    case 'K': shift = 10; end++; break;
+    case 'M': shift = 20; end++; break;
+    case 'G': shift = 30; end++; break;
+    case 'T': shift = 40; end++; break;
+    default: break;
+    }
+    if (shift != 0 && (*end == 'i' || *end == 'I')) {
+        end++;
+    }
+    if (*end == 'B' || *end == 'b') {
+        end++;
+    }
+    while (isspace((unsigned char)*end)) {
+        end++;
+    }
+    if (*end != '\0' || value == 0 || value > (UINT64_MAX >> shift)) {
+        return -1;
+    }
+    *out = (uint64_t)value << shift;
+    return 0;
 }
 
 /**

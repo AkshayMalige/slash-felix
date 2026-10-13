@@ -126,6 +126,11 @@ int reload_config(struct vrtd *state)
     int ret = config_load(&state->config);
     PROPAGATE_ERROR(ret);
 
+    if (state->config->ddr_size != 0 && allocator_set_ddr_size(state->config->ddr_size) != 0) {
+        LOG(LOG_ERR, "Ignoring invalid ddr-size %llu on reload",
+            (unsigned long long)state->config->ddr_size);
+    }
+
     LOG(LOG_INFO, "Configuration reloaded successfully");
 
     return 0;

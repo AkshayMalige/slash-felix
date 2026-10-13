@@ -220,9 +220,7 @@ def _build_functional_args_from_hls(
             "*" in src_type or has_address_ref) else "scalar"
 
         if arg_type == "buffer":
-            if reg_bits > 0 and src_size is not None and src_size > 0:
-                range_bits = max(int(src_size), int(reg_bits))
-            elif reg_bits > 0:
+            if reg_bits > 0:
                 range_bits = int(reg_bits)
             elif src_size is not None and src_size > 0:
                 range_bits = int(src_size)

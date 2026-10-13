@@ -38,6 +38,7 @@ from slashkit.core.launcher import tool_launcher
 from slashkit.core.connectivity import ConnectivityConfig
 from slashkit.parser.config_parser import parse_connectivity_file, apply_config_to_instances
 from slashkit.parser.component_parser import parse_component_xml
+from slashkit.core.board import BoardProfile, load_board_profile
 
 
 class Platform(Enum):
@@ -284,10 +285,15 @@ class LinkerConfiguration(CommandConfiguration):
         )
 
         if self._configuration.shell == "compute":
+            self._board: BoardProfile = load_board_profile(
+                "slashkit.resources.static_shell_compute")
             self._bd_ports: BlockDesignPorts = load_bd_ports_from_lines(
-                generate_bd_port_lines(num_ddr=12, num_virt=0)
+                generate_bd_port_lines(
+                    num_hbm=64 if self._board.hbm_axi_ports else 0,
+                    num_ddr=12, num_virt=0)
             )
         else:
+            self._board = load_board_profile("slashkit.resources.static_shell")
             with resources.path("slashkit.resources", "bd_ports.txt") as bd_ports_path:
                 self._bd_ports: BlockDesignPorts = load_bd_ports_from_file(
                     bd_ports_path
@@ -313,6 +319,10 @@ class LinkerConfiguration(CommandConfiguration):
     @property
     def block_design_ports(self) -> BlockDesignPorts:
         return self._bd_ports
+
+    @property
+    def board(self) -> BoardProfile:
+        return self._board
 
     @property
     def configuration(self) -> ConnectivityConfig:

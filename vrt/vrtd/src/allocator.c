@@ -45,7 +45,25 @@
 
 #include "allocator.h"
 
+#include <errno.h>
 #include <stdlib.h>
+
+static size_t ddr_region_count_default = DDR_REGIONS;
+
+int allocator_set_ddr_size(uint64_t bytes)
+{
+    if (bytes == 0 || bytes > DDR_DEFAULT_SIZE || (bytes % REGION_SIZE) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    ddr_region_count_default = (size_t)(bytes / REGION_SIZE);
+    return 0;
+}
+
+uint64_t allocator_get_ddr_size(void)
+{
+    return (uint64_t)ddr_region_count_default * REGION_SIZE;
+}
 
 /**
  * Create a new device memory map with all subregions marked as free.
@@ -57,7 +75,11 @@
  */
 struct device_memory_map *device_memory_map_create(void)
 {
-    return calloc(1, sizeof(struct device_memory_map));
+    struct device_memory_map *map = calloc(1, sizeof(struct device_memory_map));
+    if (map != NULL) {
+        map->ddr_region_count = ddr_region_count_default;
+    }
+    return map;
 }
 
 /** Free a device memory map.  NULL-safe. */
@@ -117,7 +139,7 @@ enum allocation_result device_memory_map_allocate(struct device_memory_map *map,
         }
         /* Scan all DDR regions for a contiguous run of free subregions
          * (first-fit across regions, first-fit within each region). */
-        for (size_t region_idx = 0; region_idx < DDR_REGIONS; region_idx++) {
+        for (size_t region_idx = 0; region_idx < map->ddr_region_count; region_idx++) {
             size_t contiguous_free = 0;
             for (size_t subregion_idx = 0; subregion_idx < SUBREGIONS_PER_REGION; subregion_idx++) {
                 if (map->ddr_regions[region_idx].client_id[subregion_idx] == 0) {
@@ -248,7 +270,7 @@ enum allocation_result device_memory_map_free(struct device_memory_map *map,
     switch (type) {
     case ALLOCATION_TYPE_DDR:
         base = DDR_START_ADDRESS;
-        max_size = DDR_REGIONS * REGION_SIZE;
+        max_size = (uint64_t)map->ddr_region_count * REGION_SIZE;
         ddr_regions = map->ddr_regions;
         break;
     case ALLOCATION_TYPE_HBM:

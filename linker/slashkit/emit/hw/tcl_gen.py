@@ -253,6 +253,17 @@ def generate_tcl(config: LinkerConfiguration) -> None:
                         "(compute shell has no virtual memory ports)."
                     )
 
+    if not config.board.hbm_axi_ports:
+        for inst in instances.values():
+            for port, tgt in inst.params.get("mem_sp", {}).items():
+                domain = str(tgt.get("domain", "")).upper()
+                if domain in ("HBM", "MEM"):
+                    raise ValueError(
+                        f"sp={inst.name}.{port}:{domain} is not available on board "
+                        f"'{config.board.name}' (it has no HBM; MEM buffers live in "
+                        "HBM); use DDR0-DDR3 instead."
+                    )
+
     # Debug hub S_AXI joins the AXI-Lite control fan-out as an extra slave
     # (empty when no debug nets are configured).
     hub_slaves = build_debug_hub_slaves(cfg.debug)
@@ -341,6 +352,8 @@ def generate_tcl(config: LinkerConfiguration) -> None:
     ctx.update(build_system_ila_debug_context(instances, cfg.debug))
     ctx["project_name"] = config.project_name
     ctx["slash_bd_name"] = f"slash_{config.project_name}"
+    ctx["hbm_axi_ports"] = config.board.hbm_axi_ports
+    ctx["rm_reset_bufg"] = config.board.rm_reset_bufg
 
     slash_template = (
         "slash.tcl" if config.shell_type == ShellType.SERVICE else "slash_compute.tcl"

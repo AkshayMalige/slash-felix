@@ -1,0 +1,34 @@
+--- a/fw/AMC/CMakeLists.txt
++++ b/fw/AMC/CMakeLists.txt
+@@ -110,6 +110,13 @@
+             set(PROFILE_FAL_PATH "src/profiles/v80/profile_fal.c")
+             set(PROFILE_DEBUG_MENU_PATH "src/profiles/v80/profile_debug_menu.c")
+             add_definitions(-DOOB_ENABLED)
++        elseif(PROFILE MATCHES "^(felix)$")
++            include_directories(src/profiles/felix)
++            set(PROFILE "felix")
++            set(PROFILE_FAL_PATH "src/profiles/felix/profile_fal.c")
++            set(PROFILE_DEBUG_MENU_PATH "src/profiles/felix/profile_debug_menu.c")
++            set(FW_IF_SMBUS_BLOCK_IO_PATH "src/fal/smbus/fw_if_smbus_stub.c")
++            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-error=format -Wno-error=address")
+         elseif(PROFILE MATCHES "^(v70)$")
+             include_directories(src/profiles/v70)
+             set(FW_IF_QSFP_PATH "")
+@@ -195,7 +202,7 @@
+     include_directories(src/apps/bim)
+ 
+     if(CMAKE_BUILD_TYPE MATCHES "^(Debug)$")
+-        if((PROFILE MATCHES "^(v80)$") OR (PROFILE MATCHES "^(v70)$"))
++        if((PROFILE MATCHES "^(v80)$") OR (PROFILE MATCHES "^(v70)$") OR (PROFILE MATCHES "^(felix)$"))
+             include_directories(src/device_drivers/ospi/debug)
+             include_directories(src/device_drivers/emmc/debug)
+         endif()
+@@ -279,7 +286,7 @@
+                 )
+ 
+     if(CMAKE_BUILD_TYPE MATCHES "^(Debug)$")
+-        if((PROFILE MATCHES "^(v80)$") OR (PROFILE MATCHES "^(v70)$"))
++        if((PROFILE MATCHES "^(v80)$") OR (PROFILE MATCHES "^(v70)$") OR (PROFILE MATCHES "^(felix)$"))
+             target_sources(${NAME}
+                 PRIVATE src/device_drivers/ospi/debug/ospi_debug.c
+                 PRIVATE src/device_drivers/emmc/debug/emmc_debug.c

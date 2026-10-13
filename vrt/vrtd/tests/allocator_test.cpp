@@ -359,3 +359,62 @@ TEST_F(AllocatorTest, HbmVnocAddressMath) {
               ALLOCATION_RESULT_SUCCESS);
     EXPECT_EQ(addr, HBM_START_ADDRESS + 2 * SUBREGION_SIZE);
 }
+
+
+class AllocatorDdrSizeTest : public ::testing::Test {
+   protected:
+    void TearDown() override {
+        ASSERT_EQ(allocator_set_ddr_size(DDR_DEFAULT_SIZE), 0);
+    }
+};
+
+TEST_F(AllocatorDdrSizeTest, DefaultIsAllRegions) {
+    EXPECT_EQ(allocator_get_ddr_size(), DDR_DEFAULT_SIZE);
+    struct device_memory_map *map = device_memory_map_create();
+    ASSERT_NE(map, nullptr);
+    EXPECT_EQ(map->ddr_region_count, (size_t)DDR_REGIONS);
+    device_memory_map_cleanup(map);
+}
+
+TEST_F(AllocatorDdrSizeTest, RejectsInvalidSizes) {
+    EXPECT_EQ(allocator_set_ddr_size(0), -1);
+    EXPECT_EQ(allocator_set_ddr_size(REGION_SIZE + SUBREGION_SIZE), -1);
+    EXPECT_EQ(allocator_set_ddr_size(DDR_DEFAULT_SIZE + REGION_SIZE), -1);
+    EXPECT_EQ(allocator_get_ddr_size(), DDR_DEFAULT_SIZE);
+}
+
+TEST_F(AllocatorDdrSizeTest, NeverAllocatesAboveTheConfiguredSize) {
+    const uint64_t felix = 14ULL << 30;
+    ASSERT_EQ(allocator_set_ddr_size(felix), 0);
+    struct device_memory_map *map = device_memory_map_create();
+    ASSERT_NE(map, nullptr);
+    EXPECT_EQ(map->ddr_region_count, 28u);
+
+    int ok = 0;
+    for (;;) {
+        uint64_t size = REGION_SIZE, addr = 0;
+        if (device_memory_map_allocate(map, ALLOCATION_TYPE_DDR, &size, 0, 1, &addr) !=
+            ALLOCATION_RESULT_SUCCESS) {
+            break;
+        }
+        EXPECT_LE(addr + size, DDR_START_ADDRESS + felix);
+        ok++;
+    }
+    EXPECT_EQ(ok, 28);
+
+    EXPECT_EQ(device_memory_map_free(map, ALLOCATION_TYPE_DDR, DDR_START_ADDRESS + felix,
+                                     REGION_SIZE, 1), ALLOCATION_RESULT_BAD_ARGUMENT);
+    EXPECT_EQ(device_memory_map_free(map, ALLOCATION_TYPE_DDR, DDR_START_ADDRESS,
+                                     REGION_SIZE, 1), ALLOCATION_RESULT_SUCCESS);
+    device_memory_map_cleanup(map);
+}
+
+TEST_F(AllocatorDdrSizeTest, AppliesOnlyToMapsCreatedAfterwards) {
+    struct device_memory_map *before = device_memory_map_create();
+    ASSERT_EQ(allocator_set_ddr_size(1ULL << 30), 0);
+    struct device_memory_map *after = device_memory_map_create();
+    EXPECT_EQ(before->ddr_region_count, (size_t)DDR_REGIONS);
+    EXPECT_EQ(after->ddr_region_count, 2u);
+    device_memory_map_cleanup(before);
+    device_memory_map_cleanup(after);
+}

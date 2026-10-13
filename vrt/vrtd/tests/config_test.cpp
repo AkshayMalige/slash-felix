@@ -224,3 +224,85 @@ TEST(ConfigCleanupTest, CleanupRoleZeroed) {
     auto *r = static_cast<struct role *>(calloc(1, sizeof(struct role)));
     cleanup_role(r);
 }
+
+
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static struct config *load_config_text(const std::string &text) {
+    char path[] = "/tmp/vrtd_config_test_XXXXXX";
+    int fd = mkstemp(path);
+    if (fd < 0) {
+        return nullptr;
+    }
+    if (write(fd, text.data(), text.size()) != (ssize_t)text.size()) {
+        close(fd);
+        unlink(path);
+        return nullptr;
+    }
+    close(fd);
+    setenv("VRTD_CONFIG", path, 1);
+    struct config *config = nullptr;
+    int ret = config_load(&config);
+    unsetenv("VRTD_CONFIG");
+    unlink(path);
+    return ret == 0 ? config : nullptr;
+}
+
+TEST(ConfigDdrSizeTest, DefaultsToZero) {
+    struct config *config = load_config_text("[role:info]\nquery-devices = yes\n");
+    ASSERT_NE(config, nullptr);
+    EXPECT_EQ(config->ddr_size, 0u);
+    cleanup_configp(&config);
+}
+
+TEST(ConfigDdrSizeTest, ParsesBinarySuffixes) {
+    const struct { const char *value; uint64_t bytes; } cases[] = {
+        {"14G", 14ULL << 30}, {"14336M", 14ULL << 30}, {"14GiB", 14ULL << 30},
+        {" 32g ", 32ULL << 30}, {"1073741824", 1ULL << 30},
+    };
+    for (const auto &c : cases) {
+        struct config *config = load_config_text(std::string("ddr-size = ") + c.value + "\n");
+        ASSERT_NE(config, nullptr) << c.value;
+        EXPECT_EQ(config->ddr_size, c.bytes) << c.value;
+        cleanup_configp(&config);
+    }
+}
+
+TEST(ConfigDdrSizeTest, RejectsGarbage) {
+    for (const char *bad : {"fourteen", "14X", "0", "-1G", ""}) {
+        EXPECT_EQ(load_config_text(std::string("ddr-size = ") + bad + "\n"), nullptr) << bad;
+    }
+}
+
+TEST(ConfigDdrSizeTest, ReadFromIncludedFile) {
+    char dir[] = "/tmp/vrtd_config_dir_XXXXXX";
+    ASSERT_NE(mkdtemp(dir), nullptr);
+    const std::string base(dir);
+    const std::string sub = base + "/vrtd.conf.d";
+    ASSERT_EQ(mkdir(sub.c_str(), 0700), 0);
+    FILE *f = std::fopen((base + "/vrtd.conf").c_str(), "w");
+    ASSERT_NE(f, nullptr);
+    std::fputs("include-glob = vrtd.conf.d/*.conf\n[role:info]\nquery-devices = yes\n", f);
+    std::fclose(f);
+    f = std::fopen((sub + "/felix.conf").c_str(), "w");
+    ASSERT_NE(f, nullptr);
+    std::fputs("ddr-size = 14G\n", f);
+    std::fclose(f);
+
+    setenv("VRTD_CONFIG", (base + "/vrtd.conf").c_str(), 1);
+    struct config *config = nullptr;
+    const int ret = config_load(&config);
+    unsetenv("VRTD_CONFIG");
+    std::remove((sub + "/felix.conf").c_str());
+    rmdir(sub.c_str());
+    std::remove((base + "/vrtd.conf").c_str());
+    rmdir(dir);
+
+    ASSERT_EQ(ret, 0);
+    EXPECT_EQ(config->ddr_size, 14ULL << 30);
+    cleanup_configp(&config);
+}
