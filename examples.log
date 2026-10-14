@@ -1,0 +1,255 @@
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ ./felix/scripts/preflight_check.sh 
+
+=== 1. PS-side DDR route (the PLM-stall root cause) ======================
+  PASS  PMC_NOC_AXI_0 can reach C0_DDR_LOW0
+  PASS  LPD_AXI_NOC_0 can reach C0_DDR_LOW0
+  PASS  05_fix_static.tcl re-points the PMC/RPU DDR routes
+  PASS  shell build-ID register mapped at 0x204_0002_0000 (vrtd reads PF2 BAR4+0x20000)
+
+=== 1b. FELIX shell staged for the linker ===============================
+  PASS  linker/slashkit/resources/static_shell_compute/static_shell_slash.dcp
+  PASS  linker/slashkit/resources/static_shell_compute/slash_base/slash_base.bd
+  PASS  linker/slashkit/resources/static_shell_compute/board.json
+
+=== 2. AMC firmware load addresses =======================================
+  PASS  amc.elf LOAD segments fit the mapped DDR low region
+        LOAD vaddr=0x00000000 memsz=0x007c8
+        LOAD vaddr=0x40000000 memsz=0x1500d00
+
+=== 3. Combined AMC PDI ==================================================
+  PASS  combined PDI is newer than the base PDI
+  PASS  combined PDI has 2 r5-0 partitions (AMC: TCM + DDR segments)
+  PASS  rpu_subsystem present with id 0x1c000000
+
+=== 4. Artifacts staged from THIS implementation =========================
+  PASS  staged base PDI is up to date with impl_1
+
+=== 5. Host stack ========================================================
+  PASS  module 'slash' loaded
+  PASS  module 'ami' loaded
+  PASS  PF0 bound to 'ami'
+  PASS  PF1 bound to 'slash_qdma'
+  PASS  PF2 bound to 'slash_ctl'
+  PASS  vrtd.socket active
+  PASS  vrtd.socket enabled at boot
+  PASS  you are in group 'vrtadmin'
+
+==========================================================================
+PASS=20  FAIL=0  WARN=0  SKIP=0
+Build and host look consistent.
+
+Reminders:
+  * VRT/vrtd take the board address without the function: 0000:41:00
+  * the card loads felix/hw/artifacts/felix_sd.img only on a COLD power cycle
+  * after a power cycle: journalctl -u vrtd -b | grep -E 'DDR size|Discovered 1 device'
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ lspci -nn -d 10ee:
+41:00.0 Processing accelerators [1200]: Xilinx Corporation Device [10ee:50b4]
+41:00.1 Processing accelerators [1200]: Xilinx Corporation Device [10ee:50c1]
+41:00.2 Processing accelerators [1280]: Xilinx Corporation Device [10ee:50c2]
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ v80-smi list
+Board 0000:41:00 OK (PF0: OK) (PF1: OK) (PF2: OK) (VRTD: OK) Shell: compute
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ rm -rf ~/.cache/SLASH/vrt/vrtbin_* 
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ ls -ltrh felix/examples/
+total 28K
+drwxrwxr-x 4 synthara synthara 4.0K Oct 13 18:19 04_test_felix
+drwxrwxr-x 3 synthara synthara 4.0K Oct 13 18:43 00_axilite
+drwxrwxr-x 3 synthara synthara 4.0K Oct 13 19:07 01_aximm
+drwxrwxr-x 4 synthara synthara 4.0K Oct 13 19:53 02_ddr_bw
+drwxrwxr-x 4 synthara synthara 4.0K Oct 13 20:17 03_qdma_bw
+drwxrwxr-x 4 synthara synthara 4.0K Oct 13 20:40 06_clock_range
+drwxrwxr-x 4 synthara synthara 4.0K Oct 13 21:04 07_reg_window
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ E=felix/examples
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ echo $E
+felix/examples
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ felix/tools/ddr_capacity/build/ddr_capacity -d 0000:41:00
+ddr_capacity: device 0000:41:00, 0x60000000000 .. 0x60380000000 (14 GB)
+alias probe: 28 regions, 4 KB each at +256 MB, contents restored
+  0 of 28 regions share memory with another region
+pass 1: write 28 x 512 MB on channel 0, then read all on channel 1
+  wrote 14 GB  (DMA 9.14 GB/s, total 8 s)
+  read  14 GB  (DMA 8.14 GB/s, total 9 s): 28/28 regions OK
+pass 2: write 28 x 512 MB on channel 1, then read all on channel 0
+  wrote 14 GB  (DMA 9.15 GB/s, total 8 s)
+  read  14 GB  (DMA 8.15 GB/s, total 9 s): 28/28 regions OK
+DDR_CAPACITY: PASS
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ $E/04_test_felix/build/04_test_felix 0000:41:00 $E/04_test_felix/build/test_felix_hw.vbin
+
+========================================================
+  04_test_felix -- FELIX platform full test & benchmark
+========================================================
+
+[0] Device program + platform info
+-----------------------------------
+[2026-10-14 09:26:26.431] [INFO ] void vrt::impl::Device::programDevice()                                         : Programming PDI via vrtd design writer /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/images/top_i_slash_slash_test_felix_hw_inst_0_partial.pdi
+[2026-10-14 09:26:28.073] [INFO ] vrt::impl::Device::Device(const string&, const string&, bool, vrt::ProgramType) : Programmed user clock to 250000000 Hz (target 250000000 Hz)
+  BDF                : 41:00
+  PDI program time   : 1710.2 ms
+  Kernel clock (hw)  : 250.0 MHz  <- actual, read back from the clk_wiz
+  Requested (vbin)   : 250.0 MHz  <- config.cfg freqhz, capped by timing
+  Kernel attach      : 0.07 ms
+
+[1] QDMA host<->card DATA CORRECTNESS (round-trip)
+--------------------------------------------------
+    fill host -> H2D -> wipe host -> D2H -> compare
+    4 KB       PASS
+    64 KB      PASS
+    1 MB       PASS
+    16 MB      PASS
+    64 MB      PASS
+    256 MB     PASS
+
+[2] QDMA host<->card BANDWIDTH (best-of-5)
+--------------------------------------------
+        SizeH2D (host->card)D2H (card->host)
+         1 MB      10.41 GB/s       8.67 GB/s
+         2 MB      11.59 GB/s       9.12 GB/s
+         4 MB      11.63 GB/s       9.36 GB/s
+         8 MB      10.73 GB/s       9.17 GB/s
+        16 MB      10.81 GB/s       8.76 GB/s
+        32 MB      10.23 GB/s       8.68 GB/s
+        64 MB      10.15 GB/s       8.74 GB/s
+       128 MB      10.22 GB/s       8.59 GB/s
+       256 MB      12.81 GB/s       9.95 GB/s
+       512 MB      12.91 GB/s      10.32 GB/s
+
+[3] Kernel<->DDR CORRECTNESS
+----------------------------
+    running write (65536 words)... done
+    write-pattern   : PASS
+    running read  (65536 words)... done
+    read-accumulate : PASS
+
+[4] Kernel<->DDR BANDWIDTH (on-card, 512-bit ports, PCIe excluded)
+------------------------------------------------------------------
+    buffer: 128 MB per port
+    running 1 port ... done
+    running 2 ports... done
+                         1 port  2 ports
+    Write (GB/s) :      14.25     14.25
+    Read  (GB/s) :       9.43     14.59
+
+[5] Kernel execution latency vs size (read)
+-------------------------------------------
+        Size        time           BW
+         1 MB    0.122 ms     8.61 GB/s
+         4 MB    0.455 ms     9.21 GB/s
+        16 MB    1.788 ms     9.38 GB/s
+        64 MB    7.120 ms     9.43 GB/s
+       256 MB   28.450 ms     9.44 GB/s
+
+========================== SUMMARY ==========================
+  Correctness / checks : 13 passed, 0 failed
+  QDMA host->card peak : 12.91 GB/s
+  QDMA card->host peak : 10.32 GB/s
+  DDR write  (1 / 2 p) : 14.25 / 14.25 GB/s
+  DDR read   (1 / 2 p) : 9.43 / 14.59 GB/s
+  ---------------------------------------------------------
+  Reference: DDR4-2666 single channel = 21.3 GB/s peak
+             (72 bits = 64 data + 8 ECC; ECC is not payload).
+  Expected here (compute shell, 16 GB DIMM, 2026-10-13): write ~14.2
+  (1 or 2 ports), read ~9.4 (1) / ~14.6 (2); QDMA H2D ~13, D2H ~9.8 GB/s.
+  All DDR traffic -- both kernels AND QDMA -- shares ONE door into the
+  DDRMC, so writes do not scale with port count and the aggregate stays
+  near ~14.5 no matter how many kernels run. The Gen5 x8 link (~31.5 GB/s)
+  is not the limit.
+  VERDICT: ALL CHECKS PASSED
+=============================================================
+
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ $E/00_axilite/build/00_axilite 0000:41:00 $E/00_axilite/build/axilite_hw.vbin
+VRT Version: 1.0.0
+[2026-10-14 09:27:32.665] [DEBUG] void vrt::Vrtbin::extract()                                                     : Extracting vrtbin: felix/examples/00_axilite/build/axilite_hw.vbin
+[2026-10-14 09:27:32.730] [DEBUG] void vrt::Vrtbin::copy(const string&, const string&)                            : Copying file /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/system_map.xml to /home/synthara/.cache/SLASH/vrt/metadata_0000_41_00/system_map.xml
+[2026-10-14 09:27:32.730] [DEBUG] void vrt::Vrtbin::copy(const string&, const string&)                            : Copying file /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/report_utilization_axilite_hw.xml to /home/synthara/.cache/SLASH/vrt/metadata_0000_41_00/report_utilization.xml
+[2026-10-14 09:27:32.732] [INFO ] void vrt::impl::Device::programDevice()                                         : Programming PDI via vrtd design writer /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/images/top_i_slash_slash_axilite_hw_inst_0_partial.pdi
+[2026-10-14 09:27:34.394] [INFO ] vrt::impl::Device::Device(const string&, const string&, bool, vrt::ProgramType) : Programmed user clock to 200000000 Hz (target 200000000 Hz)
+[2026-10-14 09:27:34.418] [DEBUG] void vrt::Buffer<T>::initAllocate() [with T = float]                            : Allocated buffer final_space_bytes=4096 phys_addr=0x60000000000
+Generating data...
+[2026-10-14 09:27:34.418] [DEBUG] void vrt::Kernel::writeBatch()                                                  : Kernel increment_0, reg at offset 0x10, value: 0x400
+[2026-10-14 09:27:34.418] [DEBUG] void vrt::Kernel::writeBatch()                                                  : Kernel increment_0, reg at offset 0x18, value: 0
+[2026-10-14 09:27:34.418] [DEBUG] void vrt::Kernel::writeBatch()                                                  : Kernel increment_0, reg at offset 0x1c, value: 0x600
+[2026-10-14 09:27:34.419] [DEBUG] void vrt::Kernel::write(uint32_t, uint32_t)                                     : Writing to device  kernel: increment_0 at offset: 0 value: 0x1
+[2026-10-14 09:27:34.419] [DEBUG] void vrt::Kernel::writeBatch()                                                  : Kernel accumulate_0, reg at offset 0x10, value: 0x400
+[2026-10-14 09:27:34.419] [DEBUG] void vrt::Kernel::write(uint32_t, uint32_t)                                     : Writing to device  kernel: accumulate_0 at offset: 0 value: 0x1
+Time taken for waits: 43 us
+[2026-10-14 09:27:34.419] [DEBUG] uint32_t vrt::Kernel::read(uint32_t)                                            : Reading from device  kernel: accumulate_0 at offset: 0x1c
+[2026-10-14 09:27:34.419] [DEBUG] uint32_t vrt::Kernel::read(uint32_t)                                            : Reading from device  kernel: accumulate_0 at offset: 0x18
+Expected: 1548.05223
+Got: 1548.052124
+Absolute error: 0.0001059378847 (effective tolerance 0.0154805223, abs 0.001, rel 1e-05)
+Test passed!
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ $E/01_aximm/build/01_aximm 0000:41:00 $E/01_aximm/build/aximm_hw.vbin
+[2026-10-14 09:27:56.833] [INFO ] void vrt::impl::Device::programDevice()                                         : Programming PDI via vrtd design writer /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/images/top_i_slash_slash_aximm_hw_inst_0_partial.pdi
+[2026-10-14 09:27:58.473] [INFO ] vrt::impl::Device::Device(const string&, const string&, bool, vrt::ProgramType) : Programmed user clock to 200000000 Hz (target 200000000 Hz)
+Test passed
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ $E/01_aximm/build/01_aximm 0000:41:00 $E/01_aximm/build/aximm_ddr23_hw.vbin
+[2026-10-14 09:28:28.605] [INFO ] void vrt::impl::Device::programDevice()                                         : Programming PDI via vrtd design writer /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/images/top_i_slash_slash_aximm_ddr23_hw_inst_0_partial.pdi
+[2026-10-14 09:28:30.269] [INFO ] vrt::impl::Device::Device(const string&, const string&, bool, vrt::ProgramType) : Programmed user clock to 200000000 Hz (target 200000000 Hz)
+Test passed
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ $E/02_ddr_bw/build/02_ddr_bw 0000:41:00 $E/02_ddr_bw/build/ddr_bw_hw.vbin
+DDR bandwidth test: 2 ports x 262144 words = 16 MB/port (32 MB total), iters=5
+Programming device...
+[2026-10-14 09:28:51.683] [INFO ] void vrt::impl::Device::programDevice()                                         : Programming PDI via vrtd design writer /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/images/top_i_slash_slash_ddr_bw_hw_inst_0_partial.pdi
+[2026-10-14 09:28:53.333] [INFO ] vrt::impl::Device::Device(const string&, const string&, bool, vrt::ProgramType) : Programmed user clock to 250000000 Hz (target 250000000 Hz)
+Programmed on 41:00
+
+================ DDR bandwidth (kernel-time only) ================
+  Read   (2 ports): 14.45   GB/s   (2.322 ms)
+  Write  (2 ports): 14.18   GB/s   (2.366 ms)
+==================================================================
+  DDR4-2666 single channel: 21.3 GB/s peak (72 bits = 64 data + 8 ECC).
+  Measured on this platform (2026-10-13): write ~14.2, read ~14.4-14.6 GB/s (2 ports).
+  All DDR traffic -- both kernels AND QDMA -- shares ONE door into the DDRMC,
+  so a second port raises reads (~9.4 -> ~14.6) but not writes.
+  A low number here is almost always the kernel clock, not the NoC: check it
+  with `v80-smi debug clockwiz -d <bdf> --get --region user`. One 512-bit port
+  at 100 MHz is 6.4 GB/s and nothing else matters until that is raised.
+
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ $E/03_qdma_bw/build/03_qdma_bw 0000:41:00 $E/03_qdma_bw/build/qdma_bw_hw.vbin
+QDMA host<->device bandwidth
+Programming device...
+[2026-10-14 09:29:16.603] [INFO ] void vrt::impl::Device::programDevice()                                         : Programming PDI via vrtd design writer /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/images/top_i_slash_slash_qdma_bw_hw_inst_0_partial.pdi
+[2026-10-14 09:29:18.251] [INFO ] vrt::impl::Device::Device(const string&, const string&, bool, vrt::ProgramType) : Programmed user clock to 333333333 Hz (target 333333333 Hz)
+Programmed on 41:00
+
+    Size        H2D (host->card)      D2H (card->host)
+   ------      ------------------    ------------------
+   1    MB      9.62    GB/s           7.83    GB/s
+   2    MB      10.45   GB/s           8.33    GB/s
+   4    MB      11.55   GB/s           8.61    GB/s
+   8    MB      11.08   GB/s           8.43    GB/s
+   16   MB      10.76   GB/s           8.13    GB/s
+   32   MB      10.03   GB/s           7.61    GB/s
+   64   MB      10.25   GB/s           7.46    GB/s
+   128  MB      10.21   GB/s           7.67    GB/s
+   256  MB      12.51   GB/s           8.53    GB/s
+   512  MB      12.95   GB/s           10.28   GB/s
+
+  Host<->card QDMA bandwidth vs transfer size. Buffers live in card DDR, so
+  it is bounded by min(PCIe link, DDR door ~14.5 GB/s shared with kernels).
+  PCIe link now: 32.0 GT/s x8 (Gen5 x8 = 32 GT/s x8, ~31.5 GB/s).
+
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ $E/06_clock_range/build/06_clock_range 0000:41:00 $E/06_clock_range/build/clock_range_hw.vbin
+[2026-10-14 09:30:08.268] [INFO ] void vrt::impl::Device::programDevice()                                         : Programming PDI via vrtd design writer /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/images/top_i_slash_slash_clock_range_hw_inst_0_partial.pdi
+[2026-10-14 09:30:09.913] [INFO ] vrt::impl::Device::Device(const string&, const string&, bool, vrt::ProgramType) : Programmed user clock to 400000000 Hz (target 400000000 Hz)
+vbin linked for 400 MHz
+
+ requested   read-back    measured   result
+100.000   100.000     99.973         OK
+156.250   156.250     156.243        OK
+200.000   200.000     199.993        OK
+240.474   240.476     240.469        OK
+250.000   250.000     249.992        OK
+300.000   300.000     299.985        OK
+320.000   320.000     319.988        OK
+350.000   350.000     349.993        OK
+400.000   400.000     399.991        OK
+
+CLOCK_RANGE: PASS
+(base) synthara@synthara-Super-Server:~/VersalPrjs/felix/felix-xpfm-pcie/slash-felix$ $E/07_reg_window/build/07_reg_window 0000:41:00 $E/07_reg_window/build/reg_window_hw.vbin
+[2026-10-14 09:31:12.952] [INFO ] void vrt::impl::Device::programDevice()                                         : Programming PDI via vrtd design writer /home/synthara/.cache/SLASH/vrt/vrtbin_0000_41_00/images/top_i_slash_slash_reg_window_hw_inst_0_partial.pdi
+[2026-10-14 09:31:14.614] [INFO ] vrt::impl::Device::Device(const string&, const string&, bool, vrt::ProgramType) : Programmed user clock to 250000000 Hz (target 250000000 Hz)
+round 0: kernel sum 0xecc37133, expected 0xecc37133, 24/24 registers read back -> OK
+round 1: kernel sum 0x53616a51, expected 0x53616a51, 24/24 registers read back -> OK
+round 2: kernel sum 0x4975525f, expected 0x4975525f, 24/24 registers read back -> OK
+registers 0x40-0xBF (a6..a21) written by the host and used by the kernel: yes
+REG_WINDOW: PASS
