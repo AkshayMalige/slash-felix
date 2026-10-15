@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: amalige <amalige@bnl.gov>
+Date: Thu, 15 Oct 2026 12:41:33 -0400
+Subject: [PATCH 3/3] Pin flx-peta-drv and ez-hw-test to the revisions tested
+ on FLX-155
+
+flx-driver-versal f48484ffd23c (2026-08-06) and flx-versal-bist-webapp
+eb5237022084 (2026-10-06) instead of AUTOREV, so rebuilds are reproducible.
+---
+ project-spec/meta-user/recipes-apps/bist/ez-hw-test.bb.flx155A  | 2 +-
+ .../meta-user/recipes-modules/flx-peta-drv/flx-peta-drv.bb      | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/project-spec/meta-user/recipes-apps/bist/ez-hw-test.bb.flx155A b/project-spec/meta-user/recipes-apps/bist/ez-hw-test.bb.flx155A
+index b90beca..85ef9ea 100644
+--- a/project-spec/meta-user/recipes-apps/bist/ez-hw-test.bb.flx155A
++++ b/project-spec/meta-user/recipes-apps/bist/ez-hw-test.bb.flx155A
+@@ -37,7 +37,7 @@ SRC_URI = "git://gitlab.cern.ch/atlas-tdaq-felix/felix-versal-tools/flx-versal-b
+ PREFERRED_VERSION_python3-chipscopy = "2022.2.1670292617"
+ #PREFERRED_VERSION_python3-chipscopy = "2024.1.1717799899"
+ 
+-SRCREV = "${AUTOREV}"
++SRCREV = "eb523702208463674378a6abfb4af9c477be8cfd"
+ PV = "1.0+git${SRCPV}"
+ 
+ S = "${WORKDIR}/git"
+diff --git a/project-spec/meta-user/recipes-modules/flx-peta-drv/flx-peta-drv.bb b/project-spec/meta-user/recipes-modules/flx-peta-drv/flx-peta-drv.bb
+index 0516e5f..b895348 100644
+--- a/project-spec/meta-user/recipes-modules/flx-peta-drv/flx-peta-drv.bb
++++ b/project-spec/meta-user/recipes-modules/flx-peta-drv/flx-peta-drv.bb
+@@ -2,7 +2,7 @@ SUMMARY = "Recipe for  build an external flx-peta-drv Linux kernel module"
+ SECTION = "PETALINUX/modules"
+ LICENSE = "GPLv2"
+ LIC_FILES_CHKSUM = "file://COPYING;md5=12f884d2ae1ff87c09e5b7ccc2c4ca7e"
+-SRCREV = "${AUTOREV}"
++SRCREV = "f48484ffd23c3a52963deeb4091d2f6229f4e9a3"
+ BB_STRICT_CHECKSUM = "0"
+ 
+ inherit module

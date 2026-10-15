@@ -36,6 +36,7 @@
 #include "profile_fal.h"
 #include "profile_hal.h"
 #include "profile_muxed_device.h"
+#include "osal.h"
 
 #ifdef DEBUG_BUILD
 #include "fw_if_gcq_debug.h"
@@ -65,6 +66,51 @@
 #define TCA6416AR_READ_BUFF_SIZE        ( 1 )
 #define TCA6416AR_READ_BYTES_TO_RECEIVE ( 1 )
 #define TCA6416AR_WRITE_BUFF_SIZE       ( 2 )
+
+
+/* FELIX Reset Configuration Mailbox: Lets the host reboot the card from another sd boot file without powercycle.
+(host: BAR0 + 0x0FFFF000).
+host area (+0x00): request = FELIX_RESET_REQUEST_MAGIC, MULTI_BOOT value
+(FELIX_RESET_KEEP_MULTIBOOT = keep), delay in ms
+AMC area  (+0x40): state, uptime, requests seen, MULTI_BOOT at boot, version
+After the delay the AMC writes MULTI_BOOT and resets the whole chip
+(CRP RST_PS PMC_SRST); the boot ROM then loads the SD boot file that
+MULTI_BOOT selects: BOOT.BIN for 0, BOOT0001.BIN for 1.
+*/
+
+#define FELIX_RESET_MBOX_ADDR       ( HAL_RPU_SHARED_MEMORY_END_ADDR )
+#define FELIX_RESET_HOST_OFFSET     ( 0x00 )
+#define FELIX_RESET_AMC_OFFSET      ( 0x40 )
+#define FELIX_RESET_REQUEST_MAGIC   ( 0x46524254 )
+#define FELIX_RESET_KEEP_MULTIBOOT  ( 0xFFFFFFFF )
+#define FELIX_RESET_MAX_DELAY_MS    ( 60000 )
+#define FELIX_RESET_POLL_MS         ( 100 )
+#define FELIX_RESET_STATE_READY     ( 0x52454459 )
+#define FELIX_RESET_STATE_ARMED     ( 0x41524D44 )
+#define FELIX_RESET_STATE_RESETTING ( 0x52535421 )
+#define FELIX_RESET_VERSION         ( 1 )
+#define FELIX_RESET_TASK_PRIO       ( 6 )
+#define FELIX_RESET_TASK_STACK      ( 0x1000 )
+#define FELIX_CRP_RST_PS            ( 0xF126031C )
+#define FELIX_CRP_RST_PS_PMC_SRST   ( 0x00000008 )
+
+typedef struct FELIX_RESET_HOST_AREA
+{
+    uint32_t ulRequest;
+    uint32_t ulMultiBoot;
+    uint32_t ulDelayMs;
+
+} FELIX_RESET_HOST_AREA;
+
+typedef struct FELIX_RESET_AMC_AREA
+{
+    uint32_t ulState;
+    uint32_t ulUptimeMs;
+    uint32_t ulRequestsSeen;
+    uint32_t ulBootMultiBoot;
+    uint32_t ulVersion;
+
+} FELIX_RESET_AMC_AREA;
 
 
 /*****************************************************************************/
@@ -116,6 +162,8 @@ FW_IF_CFG *pxSMBusIf = &xSMBusIf;
 /*****************************************************************************/
 /* Local variables                                                           */
 /*****************************************************************************/
+
+static void *pvFelixResetTaskHdl = NULL;
 
 static FW_IF_MUXED_DEVICE_CFG xQsfpCfg1 =
 {
@@ -338,6 +386,12 @@ static uint8_t ucTca6416aRegisterWrite( uint8_t ucI2cNum,
  */
 static uint8_t ucEnableSMBusPcieLink( void );
 
+static void vFelixResetPublish( volatile FELIX_RESET_AMC_AREA *pxAmc );
+
+static void vFelixResetTask( void *pvTaskParam );
+
+static void vFelixResetStart( void );
+
 
 /******************************************************************************/
 /* Private Function implementations                                           */
@@ -430,6 +484,105 @@ uint8_t ucEnableSMBusPcieLink( void )
 }
 
 
+ /**
+   * @brief   FELIX: poll the reset mailbox every FELIX_RESET_POLL_MS and reset the
+   *          system when the host writes a request
+   *
+   * @param   pvTaskParam     Unused
+   *
+   * @return  N/A (never returns)
+   */
+
+
+static void vFelixResetPublish( volatile FELIX_RESET_AMC_AREA *pxAmc )
+{
+    Xil_DCacheFlushRange( ( INTPTR )pxAmc, sizeof( FELIX_RESET_AMC_AREA ) );
+}
+
+static void vFelixResetTask( void *pvTaskParam )
+{
+    volatile FELIX_RESET_HOST_AREA *pxHost =
+        ( volatile FELIX_RESET_HOST_AREA* )( FELIX_RESET_MBOX_ADDR + FELIX_RESET_HOST_OFFSET );
+    volatile FELIX_RESET_AMC_AREA *pxAmc =
+        ( volatile FELIX_RESET_AMC_AREA* )( FELIX_RESET_MBOX_ADDR + FELIX_RESET_AMC_OFFSET );
+
+    ( void )pvTaskParam;
+
+    pxHost->ulRequest = 0;
+    Xil_DCacheFlushRange( ( INTPTR )pxHost, sizeof( FELIX_RESET_HOST_AREA ) );
+
+    pxAmc->ulState         = FELIX_RESET_STATE_READY;
+    pxAmc->ulUptimeMs      = 0;
+    pxAmc->ulRequestsSeen  = 0;
+    pxAmc->ulBootMultiBoot = Xil_In32( HAL_APC_PMC_BOOT_REG );
+    pxAmc->ulVersion       = FELIX_RESET_VERSION;
+    vFelixResetPublish( pxAmc );
+
+    PLL_LOG( FAL_PROFILE_NAME, "Reset mailbox: ready, MULTI_BOOT 0x%08x\r\n",
+             ( unsigned int )pxAmc->ulBootMultiBoot );
+
+    for( ;; )
+    {
+        Xil_DCacheInvalidateRange( ( INTPTR )pxHost, sizeof( FELIX_RESET_HOST_AREA ) );
+
+        if( FELIX_RESET_REQUEST_MAGIC == pxHost->ulRequest )
+        {
+            uint32_t ulMultiBoot = pxHost->ulMultiBoot;
+            uint32_t ulDelayMs   = pxHost->ulDelayMs;
+
+            if( FELIX_RESET_MAX_DELAY_MS < ulDelayMs )
+            {
+                ulDelayMs = FELIX_RESET_MAX_DELAY_MS;
+            }
+
+            pxHost->ulRequest = 0;
+            Xil_DCacheFlushRange( ( INTPTR )pxHost, sizeof( FELIX_RESET_HOST_AREA ) );
+
+            pxAmc->ulRequestsSeen++;
+            pxAmc->ulState = FELIX_RESET_STATE_ARMED;
+            vFelixResetPublish( pxAmc );
+
+            PLL_LOG( FAL_PROFILE_NAME, "Reset mailbox: system reset in %u ms, MULTI_BOOT 0x%08x\r\n",
+                     ( unsigned int )ulDelayMs, ( unsigned int )ulMultiBoot );
+
+            iOSAL_Task_SleepMs( ulDelayMs );
+
+            if( FELIX_RESET_KEEP_MULTIBOOT != ulMultiBoot )
+            {
+                Xil_Out32( HAL_APC_PMC_BOOT_REG, ulMultiBoot );
+            }
+
+            pxAmc->ulState = FELIX_RESET_STATE_RESETTING;
+            vFelixResetPublish( pxAmc );
+
+            __asm__ volatile ( "dsb" ::: "memory" );   /* FELIX: chip reset (PMC_SRST), like the SRST_B pin */
+            __asm__ volatile ( "isb" ::: "memory" );
+            Xil_Out32( FELIX_CRP_RST_PS, FELIX_CRP_RST_PS_PMC_SRST );
+
+            for( ;; )
+            {
+            }
+        }
+
+        iOSAL_Task_SleepMs( FELIX_RESET_POLL_MS );
+        pxAmc->ulUptimeMs += FELIX_RESET_POLL_MS;
+        vFelixResetPublish( pxAmc );
+    }
+}
+
+static void vFelixResetStart( void )
+{
+    if( OSAL_ERRORS_NONE != iOSAL_Task_Create( &pvFelixResetTaskHdl,
+                                               vFelixResetTask,
+                                               FELIX_RESET_TASK_STACK,
+                                               NULL,
+                                               FELIX_RESET_TASK_PRIO,
+                                               "felix_reset task" ) )
+    {
+        PLL_ERR( FAL_PROFILE_NAME, "Reset mailbox: task create failed\r\n" );
+    }
+}
+
 /******************************************************************************/
 /* Public Function implementations                                            */
 /******************************************************************************/
@@ -446,6 +599,8 @@ int iFAL_Initialise( uint64_t *pullAmcInitStatus )
     {
         0
     };
+
+    vFelixResetStart();   /* FELIX: start the reset mailbox before the interfaces below, whatever their result */
 
     if( NULL != pullAmcInitStatus )
     {

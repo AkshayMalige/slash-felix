@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: amalige <amalige@bnl.gov>
+Date: Thu, 15 Oct 2026 12:41:33 -0400
+Subject: [PATCH 2/3] FLX155A: limit Linux to the 2 GB DDR_LOW0 region
+
+The FLX155 DDR controller is set up for a 32 GB UDIMM (16 Gbit chips). With
+a 16 GB UDIMM (8 Gbit chips) the addresses alias every 8 GB, so the high DDR
+region in the generated device tree overlaps memory that is already in use.
+Linux then corrupts its own memory. Keep it in DDR_LOW0 (0x0-0x7FFFFFFF).
+---
+ .../recipes-bsp/device-tree/files/system-user.dtsi.flx155A | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi.flx155A b/project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi.flx155A
+index a8124ae..eff8c90 100644
+--- a/project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi.flx155A
++++ b/project-spec/meta-user/recipes-bsp/device-tree/files/system-user.dtsi.flx155A
+@@ -580,3 +580,10 @@
+ };
+ 
+ 
++
++/ {
++	memory@0 {
++		device_type = "memory";
++		reg = <0x0 0x0 0x0 0x80000000>;
++	};
++};

@@ -1,0 +1,135 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: amalige <amalige@bnl.gov>
+Date: Thu, 15 Oct 2026 12:41:33 -0400
+Subject: [PATCH 1/3] Add felix-to-slash: reboot the card into another SD boot
+ file
+
+felix-to-slash writes the PMC MULTI_BOOT register (0xF1110004), selects the
+system reboot scope and reboots, so the BootROM loads BOOT.BIN (default) or
+BOOT000N.BIN (-m 0xF000000N) from the SD card. -s only shows the current
+values. Enables the busybox devmem applet it uses.
+---
+ project-spec/configs/rootfs_config            |  1 +
+ project-spec/meta-user/conf/user-rootfsconfig |  1 +
+ .../felix-to-slash/felix-to-slash.bb          | 10 ++++
+ .../felix-to-slash/files/felix-to-slash       | 54 +++++++++++++++++++
+ .../recipes-core/busybox/busybox_%.bbappend   |  2 +
+ .../recipes-core/busybox/files/devmem.cfg     |  1 +
+ 6 files changed, 69 insertions(+)
+ create mode 100644 project-spec/meta-user/recipes-apps/felix-to-slash/felix-to-slash.bb
+ create mode 100755 project-spec/meta-user/recipes-apps/felix-to-slash/files/felix-to-slash
+ create mode 100644 project-spec/meta-user/recipes-core/busybox/busybox_%.bbappend
+ create mode 100644 project-spec/meta-user/recipes-core/busybox/files/devmem.cfg
+
+diff --git a/project-spec/configs/rootfs_config b/project-spec/configs/rootfs_config
+index 420d6e6..ce86035 100644
+--- a/project-spec/configs/rootfs_config
++++ b/project-spec/configs/rootfs_config
+@@ -3993,6 +3993,7 @@ CONFIG_Init-manager-systemd=y
+ # user packages 
+ #
+ CONFIG_ez-hw-test=y
++CONFIG_felix-to-slash=y
+ CONFIG_flx-monitoring-bridge=y
+ CONFIG_flx-peta-drv=y
+ CONFIG_flxnet=y
+diff --git a/project-spec/meta-user/conf/user-rootfsconfig b/project-spec/meta-user/conf/user-rootfsconfig
+index 7be9f00..3bf0271 100644
+--- a/project-spec/meta-user/conf/user-rootfsconfig
++++ b/project-spec/meta-user/conf/user-rootfsconfig
+@@ -13,3 +13,4 @@ CONFIG_knypaegje
+ CONFIG_logtemp
+ CONFIG_flx-peta-drv
+ CONFIG_ftools
++CONFIG_felix-to-slash
+diff --git a/project-spec/meta-user/recipes-apps/felix-to-slash/felix-to-slash.bb b/project-spec/meta-user/recipes-apps/felix-to-slash/felix-to-slash.bb
+new file mode 100644
+index 0000000..b577983
+--- /dev/null
++++ b/project-spec/meta-user/recipes-apps/felix-to-slash/felix-to-slash.bb
+@@ -0,0 +1,10 @@
++SUMMARY = "Reboot the whole Versal from another SD boot file (FELIX to SLASH switch)"
++LICENSE = "CLOSED"
++SRC_URI = "file://felix-to-slash"
++S = "${WORKDIR}"
++RDEPENDS:${PN} = "busybox"
++do_install() {
++	install -d ${D}${bindir}
++	install -m 0755 ${WORKDIR}/felix-to-slash ${D}${bindir}/felix-to-slash
++}
++FILES:${PN} += "${bindir}/felix-to-slash"
+diff --git a/project-spec/meta-user/recipes-apps/felix-to-slash/files/felix-to-slash b/project-spec/meta-user/recipes-apps/felix-to-slash/files/felix-to-slash
+new file mode 100755
+index 0000000..dfa89ce
+--- /dev/null
++++ b/project-spec/meta-user/recipes-apps/felix-to-slash/files/felix-to-slash
+@@ -0,0 +1,54 @@
++#!/bin/sh
++MULTI_BOOT_REG=0xF1110004
++target=0xF0000000
++delay=3
++status_only=0
++
++usage() {
++	echo "usage: felix-to-slash [-m MULTI_BOOT] [-d DELAY_S] [-s]"
++	echo "  default: MULTI_BOOT 0xF0000000 (BOOT.BIN = SLASH), system reboot in 3 s"
++	echo "  -m 0xF000000N  boot BOOT000N.BIN instead"
++	echo "  -s             only show MULTI_BOOT and the reboot scope"
++}
++
++while getopts "m:d:sh" o; do
++	case "$o" in
++		m) target=$OPTARG ;;
++		d) delay=$OPTARG ;;
++		s) status_only=1 ;;
++		*) usage; exit 2 ;;
++	esac
++done
++
++scope_file=""
++for f in /sys/devices/platform/firmware:*/shutdown_scope /sys/firmware/zynqmp/shutdown_scope; do
++	[ -w "$f" ] && { scope_file=$f; break; }
++done
++
++cur=$(devmem $MULTI_BOOT_REG 32) || { echo "FELIX_TO_SLASH: FAIL cannot read MULTI_BOOT"; exit 1; }
++echo "MULTI_BOOT now $cur"
++if [ -n "$scope_file" ]; then
++	echo "reboot scope ($scope_file): $(cat $scope_file)"
++else
++	echo "reboot scope: no shutdown_scope file found"
++fi
++[ "$status_only" = 1 ] && exit 0
++
++case "$delay" in ''|*[!0-9]*) echo "FELIX_TO_SLASH: FAIL bad delay '$delay'"; exit 2 ;; esac
++[ -n "$scope_file" ] || { echo "FELIX_TO_SLASH: FAIL no shutdown_scope, reboot would not reset the chip"; exit 1; }
++
++devmem $MULTI_BOOT_REG 32 "$target"
++rb=$(devmem $MULTI_BOOT_REG 32)
++if [ $((rb)) -ne $((target)) ]; then
++	echo "FELIX_TO_SLASH: FAIL MULTI_BOOT readback $rb, wanted $target"
++	exit 1
++fi
++echo system > "$scope_file"
++case "$(cat $scope_file)" in
++	*"[system]"*) ;;
++	*) echo "FELIX_TO_SLASH: FAIL reboot scope is $(cat $scope_file)"; exit 1 ;;
++esac
++
++logger -t felix-to-slash "MULTI_BOOT $rb, system reboot in $delay s"
++setsid sh -c "sleep $delay; sync; reboot" </dev/null >/dev/null 2>&1 &
++echo "FELIX_TO_SLASH: ARMED MULTI_BOOT $rb, system reboot in $delay s"
+diff --git a/project-spec/meta-user/recipes-core/busybox/busybox_%.bbappend b/project-spec/meta-user/recipes-core/busybox/busybox_%.bbappend
+new file mode 100644
+index 0000000..e4da90f
+--- /dev/null
++++ b/project-spec/meta-user/recipes-core/busybox/busybox_%.bbappend
+@@ -0,0 +1,2 @@
++FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
++SRC_URI += "file://devmem.cfg"
+diff --git a/project-spec/meta-user/recipes-core/busybox/files/devmem.cfg b/project-spec/meta-user/recipes-core/busybox/files/devmem.cfg
+new file mode 100644
+index 0000000..174a3f2
+--- /dev/null
++++ b/project-spec/meta-user/recipes-core/busybox/files/devmem.cfg
+@@ -0,0 +1 @@
++CONFIG_DEVMEM=y
