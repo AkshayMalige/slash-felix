@@ -8,32 +8,42 @@ RP_CACHE=/run/felix-modeswitch.rootport
 SLASH_IDS=("10ee:50b4" "10ee:50c1" "10ee:50c2")
 SLASH_DRVS=("ami" "slash_qdma" "slash_ctl")
 EXPECT_LINK="32.0 GT/s PCIe x8"
+FLXNET="${FLXNET:-$HERE/build/flxnet-drivers}"
+FLXNET_REPO=https://gitlab.cern.ch/atlas-tdaq-felix/felix-versal-tools/flxnet-drivers.git
+FLXNET_COMMIT=c7d92d8f8030f3191e8c98b7cf41ee2584d7107d
 
 usage() {
     cat <<EOU
 usage: $0 status
-       sudo $0 reboot --image N [--delay S] [--hold S] [--expect slash|felix] [--yes]
+       sudo $0 reboot --image N [--delay S] [--hold S] [--card ADDR] [--expect slash|felix] [--yes]
        sudo $0 wait-reboot [--settle S] [--expect slash|felix] [--yes]
        sudo $0 recover
+       $0 build-flxnet
 
-  status       which design the card runs, link state, AMC reset mailbox
-  reboot       card in SLASH mode: the AMC reboots the chip into SD boot file N
-               (0 = BOOT.BIN, N = BOOT000N.BIN) while the PCIe link is held down
-  wait-reboot  any mode: take the link down, wait until the card is rebooted by
-               other means (e.g. felix-to-slash on FELIX Linux), bring the link up
-  recover      link up and rescan after an interrupted run
+  status        which design the card runs, link state, AMC reset mailbox, flxnet driver
+  reboot        reboot the chip into SD boot file N (0 = BOOT.BIN, N = BOOT000N.BIN) while
+                the PCIe link is held down.
+                SLASH mode: the AMC reboots the chip.
+                FELIX mode: loads the flxnet driver (network over PCIe), runs felix-to-slash
+                on FELIX Linux with ssh (user root, asks for its password), unloads the driver
+  wait-reboot   any mode: take the link down, wait until the card is rebooted by
+                other means (e.g. felix-to-slash on the card console), bring the link up
+  recover       link up and rescan after an interrupted run
+  build-flxnet  build the flxnet driver for this kernel in $FLXNET
 
-  options: --delay S  AMC waits S s before the reset (default 8)
-           --hold S   link stays down S s (default 30, at least delay + 12)
+  options: --delay S  the card reboots S s after the request (default 8)
+           --hold S   link stays down S s (SLASH mode: default 30, at least delay + 12;
+                      FELIX mode: default delay + 60, at least delay + 30)
            --settle S wait-reboot: wait S s after Enter before link up (default 10)
+           --card ADDR  FELIX Linux address on flxnet0 (default: found with ping)
            --root-port DDDD:BB:DD.F   if the card is missing from lspci
-           env BDF (default 0000:41:00)
+           env BDF (default 0000:41:00), FLXNET (flxnet driver folder)
 EOU
     exit 2
 }
 
 CMD="${1:-}"; [ -n "$CMD" ] || usage; shift
-IMAGE=""; DELAY=8; HOLD=30; SETTLE=10; EXPECT=""; YES=0; RP=""
+IMAGE=""; DELAY=8; HOLD=""; SETTLE=10; EXPECT=""; YES=0; RP=""; CARD=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --image) IMAGE="$2"; shift 2 ;;
@@ -41,6 +51,7 @@ while [ $# -gt 0 ]; do
         --hold) HOLD="$2"; shift 2 ;;
         --settle) SETTLE="$2"; shift 2 ;;
         --expect) EXPECT="$2"; shift 2 ;;
+        --card) CARD="$2"; shift 2 ;;
         --root-port) RP="$2"; shift 2 ;;
         --yes) YES=1; shift ;;
         *) usage ;;
@@ -51,6 +62,7 @@ T0=$(date +%s)
 IS_ROOT=0; [ "$(id -u)" -eq 0 ] && IS_ROOT=1
 USR="${SUDO_USER:-$(id -un)}"
 LINK_DOWN=0
+FLXNET_UP=0
 
 log() {
     echo "[$(date +%T) +$(( $(date +%s) - T0 ))s] $*"
@@ -59,6 +71,7 @@ log() {
 }
 die() { log "ABORT: $*"; exit 1; }
 on_exit() {
+    [ "$FLXNET_UP" -eq 1 ] && flxnet_unload
     if [ "$LINK_DOWN" -eq 1 ]; then
         echo "The PCIe link is still disabled. Bring the card back with: sudo $0 recover"
     fi
@@ -66,6 +79,20 @@ on_exit() {
 trap on_exit EXIT
 as_user() { if [ "$IS_ROOT" -eq 1 ] && [ -n "${SUDO_USER:-}" ]; then sudo -u "$USR" -H "$@"; else "$@"; fi; }
 need_root() { [ "$IS_ROOT" -eq 1 ] || { echo "run with sudo: sudo $0 $CMD ..." >&2; exit 1; }; }
+
+if [ "$CMD" = build-flxnet ]; then
+    KDIR="/lib/modules/$(uname -r)/build"
+    [ -d "$KDIR" ] || die "kernel headers not found: $KDIR (package linux-headers-$(uname -r))"
+    if [ ! -d "$FLXNET/.git" ]; then
+        as_user mkdir -p "$(dirname "$FLXNET")"
+        as_user git clone -q "$FLXNET_REPO" "$FLXNET" || die "git clone $FLXNET_REPO failed"
+    fi
+    as_user git -C "$FLXNET" checkout -q "$FLXNET_COMMIT" || die "commit $FLXNET_COMMIT not found in $FLXNET"
+    as_user make -s -C "$KDIR" M="$FLXNET" clean
+    as_user make -s -C "$KDIR" M="$FLXNET" modules || die "build failed"
+    log "built $FLXNET/flxnet_dev.ko and flxnet_pcie.ko for kernel $(uname -r)"
+    exit 0
+fi
 
 if [ -z "$RP" ]; then
     if [ -e "/sys/bus/pci/devices/$BDF.0" ]; then
@@ -172,6 +199,70 @@ confirm() {
 
 mailbox() { python3 "$HERE/reset_mbox.py" --bdf "$BDF.0" "$@"; }
 
+check_unbound() {
+    local d drv
+    for d in $(devices); do
+        drv=$(drv_of "$d")
+        case " ${SLASH_DRVS[*]} none " in
+            *" $drv "*) ;;
+            *) die "$d has the driver $drv bound; unload it first" ;;
+        esac
+    done
+}
+
+flxnet_loaded() { [ -d /sys/module/flxnet_pcie ] || [ -d /sys/module/flxnet_dev ]; }
+flxnet_unload() {
+    local m
+    for m in flxnet_pcie flxnet_dev; do
+        [ -d "/sys/module/$m" ] || continue
+        rmmod "$m" || { log "rmmod $m failed"; return 1; }
+    done
+    FLXNET_UP=0
+    log "flxnet driver unloaded"
+}
+flxnet_check() {
+    local ko
+    for ko in flxnet_dev flxnet_pcie; do
+        [ -f "$FLXNET/$ko.ko" ] || die "$FLXNET/$ko.ko not found; build it with: $0 build-flxnet"
+        [ "$(modinfo -F vermagic "$FLXNET/$ko.ko" 2>/dev/null | cut -d' ' -f1)" = "$(uname -r)" ] \
+            || die "$FLXNET/$ko.ko is not built for kernel $(uname -r); run: $0 build-flxnet"
+    done
+}
+flxnet_addr() { ip -6 -o addr show dev flxnet0 scope link 2>/dev/null | grep -v tentative | awk '{print $4}' | cut -d/ -f1; }
+flxnet_up() {
+    flxnet_loaded && { flxnet_unload || die "cannot unload the flxnet driver that is already loaded"; }
+    FLXNET_UP=1
+    insmod "$FLXNET/flxnet_dev.ko" || die "insmod flxnet_dev.ko failed"
+    insmod "$FLXNET/flxnet_pcie.ko" || die "insmod flxnet_pcie.ko failed"
+    local t=0
+    until [ -e /sys/class/net/flxnet0 ]; do
+        sleep 0.2; t=$((t + 1))
+        [ "$t" -lt 25 ] || die "flxnet_pcie did not create flxnet0 (dmesg | grep flxnet)"
+    done
+    command -v nmcli > /dev/null && nmcli device set flxnet0 managed no > /dev/null 2>&1
+    ip link set flxnet0 up || die "cannot bring flxnet0 up"
+    t=0
+    until [ -n "$(flxnet_addr)" ]; do
+        sleep 0.2; t=$((t + 1))
+        [ "$t" -lt 50 ] || die "flxnet0 got no IPv6 link-local address"
+    done
+    log "flxnet driver loaded, flxnet0 up ($(flxnet_addr))"
+}
+flxnet_find() {
+    local own a end=$((SECONDS + 90))
+    own=$(flxnet_addr)
+    while [ "$SECONDS" -lt "$end" ]; do
+        for a in $(ping -6 -n -c 3 -i 0.5 -w 3 "ff02::1%flxnet0" 2>/dev/null | grep -oE 'from fe80:[0-9a-f:]+' | cut -d' ' -f2 | sort -u); do
+            grep -qxF "$a" <<< "$own" || { echo "$a"; return 0; }
+        done
+    done
+    return 1
+}
+card_ssh() {
+    as_user ssh -n -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
+        -o ConnectTimeout=10 "root@$CARD%flxnet0" "$@"
+}
+
 came_up() {
     local want_mb="${1:-}"
     log "rescan via $RP"
@@ -228,6 +319,7 @@ case "$CMD" in
         if [ "$IS_ROOT" -eq 1 ]; then echo "root port $RP: $(link_str)"; fi
         python3 "$HERE/mode_check.py" --root-port "$RP"
         echo "vrtd: $(systemctl is-active vrtd.service)"
+        echo "flxnet driver: $(flxnet_loaded && echo loaded || echo not loaded)"
         if [ "$(mode_now)" = SLASH ] && [ "$IS_ROOT" -eq 1 ]; then
             echo "AMC reset mailbox: $(mailbox status 2>&1)"
         fi
@@ -235,21 +327,62 @@ case "$CMD" in
     reboot)
         need_root
         [[ "$IMAGE" =~ ^[0-9]$ ]] || die "--image N (0..9) is required"
-        [ "$HOLD" -ge $((DELAY + 12)) ] || die "--hold must be at least --delay + 12 s (card boot time)"
+        [[ "$DELAY" =~ ^[0-9]+$ ]] || die "--delay S must be a whole number of seconds"
         MB=$(( 0xF0000000 + IMAGE ))
-        [ "$(mode_now)" = SLASH ] || die "the card is not in SLASH mode (only SLASH has the AMC reset mailbox); see wait-reboot"
-        slash_bound || die "SLASH functions or drivers are not complete; try: sudo $0 recover"
-        mailbox status > /dev/null || die "AMC reset mailbox not ready: $(mailbox status 2>&1)"
-        log "reboot into SD boot file $IMAGE ($( [ "$IMAGE" = 0 ] && echo BOOT.BIN || echo BOOT000$IMAGE.BIN)), root port $RP, link $(link_str)"
-        confirm
-        stop_vrtd
-        log "asking the AMC for a system reset in $DELAY s with MULTI_BOOT $(printf '0x%08x' "$MB")"
-        mailbox request --delay-ms $((DELAY * 1000)) --multiboot "$MB" || die "the AMC did not acknowledge (nothing was changed)"
-        T_REQ=$(date +%s%N)
+        FILE=$( [ "$IMAGE" = 0 ] && echo BOOT.BIN || echo "BOOT000$IMAGE.BIN")
+        MODE=$(mode_now)
+        if [ "$MODE" = FELIX ]; then
+            HOLD="${HOLD:-$((DELAY + 60))}"; MIN_HOLD=$((DELAY + 30))
+        else
+            HOLD="${HOLD:-30}"; MIN_HOLD=$((DELAY + 12))
+        fi
+        [ "$HOLD" -ge "$MIN_HOLD" ] || die "--hold must be at least $MIN_HOLD s in $MODE mode (--delay + card reboot time)"
+        case "$MODE" in
+            SLASH)
+                slash_bound || die "SLASH functions or drivers are not complete; try: sudo $0 recover"
+                mailbox status > /dev/null || die "AMC reset mailbox not ready: $(mailbox status 2>&1)"
+                log "reboot into SD boot file $IMAGE ($FILE), root port $RP, link $(link_str)"
+                confirm
+                stop_vrtd
+                log "asking the AMC for a system reset in $DELAY s with MULTI_BOOT $(printf '0x%08x' "$MB")"
+                mailbox request --delay-ms $((DELAY * 1000)) --multiboot "$MB" || die "the AMC did not acknowledge (nothing was changed)"
+                T_REQ=$(date +%s%N)
+                ;;
+            FELIX)
+                check_unbound
+                flxnet_check
+                log "reboot into SD boot file $IMAGE ($FILE) from FELIX Linux over flxnet, root port $RP, link $(link_str)"
+                confirm
+                flxnet_up
+                if [ -z "$CARD" ]; then
+                    log "looking for FELIX Linux on flxnet0 (up to 90 s; it boots ~1 min after the switch into FELIX)"
+                    CARD=$(flxnet_find) || die "FELIX Linux does not answer on flxnet0"
+                fi
+                log "ssh root@$CARD%flxnet0 felix-to-slash -m $(printf '0x%08X' "$MB") -d $DELAY"
+                OUT=$(card_ssh "felix-to-slash -m $(printf '0x%08X' "$MB") -d $DELAY" 2>&1); RC=$?
+                T_REQ=$(date +%s%N)
+                while IFS= read -r l; do [ -n "$l" ] && log "card: $l"; done <<< "$OUT"
+                if [[ "$OUT" == *"FELIX_TO_SLASH: ARMED"* ]]; then
+                    :
+                elif [[ "$OUT" == *"FELIX_TO_SLASH: FAIL"* || "$OUT" != *"MULTI_BOOT now"* ]]; then
+                    die "felix-to-slash did not arm a reboot (ssh exit $RC); the card stays in FELIX mode"
+                else
+                    log "WARNING: felix-to-slash started but did not finish its report; handling the reboot as armed"
+                fi
+                flxnet_unload
+                if [ -d /sys/module/flxnet_pcie ]; then
+                    card_ssh "kill \$(pgrep -f '[s]ync; reboot')" \
+                        && die "the flxnet driver could not be unloaded, so the card's reboot was cancelled"
+                    die "the flxnet driver could not be unloaded and the card's reboot could not be cancelled. Cancel it NOW on the card console: kill \$(pgrep -f '[s]ync; reboot')"
+                fi
+                ;;
+            *)
+                die "the card is in $MODE mode; reboot needs SLASH or FELIX (try: sudo $0 recover)" ;;
+        esac
         remove_devices
         link_disable
         EL=$(( ($(date +%s%N) - T_REQ) / 1000000 ))
-        log "link down ${EL} ms after the request, the reset is due at $((DELAY * 1000)) ms"
+        log "link down ${EL} ms after the request, the card reboots at $((DELAY * 1000)) ms"
         log "holding the link down for $HOLD s while the card reboots"
         sleep "$HOLD"
         link_enable 30
@@ -259,15 +392,12 @@ case "$CMD" in
         need_root
         MODE=$(mode_now)
         log "card in $MODE mode, root port $RP, link $(link_str)"
-        for d in $(devices); do
-            drv=$(drv_of "$d")
-            case " ${SLASH_DRVS[*]} none " in
-                *" $drv "*) ;;
-                *) die "$d has the driver $drv bound; unload it first" ;;
-            esac
-        done
+        check_unbound
         confirm
         [ "$MODE" = SLASH ] && stop_vrtd
+        if flxnet_loaded; then
+            flxnet_unload || die "the flxnet driver could not be unloaded; it must not run while the card reboots"
+        fi
         remove_devices
         link_disable
         echo
