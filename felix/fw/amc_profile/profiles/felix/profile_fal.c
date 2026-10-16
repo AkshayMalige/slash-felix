@@ -58,15 +58,6 @@
 #define EMMC_RPU_BASE_ADDRESS ( 0x0 )
 #define EMMC_RPU_LENGTH       ( ( uint64_t )HAL_EMMC_MAX_BLOCKS * ( uint64_t )HAL_EMMC_BLOCK_SIZE ) /* 64Gb */
 
-/* Enable SMBus PCIe link */
-#define TCA6416AR_BIT_3                 ( 1 << 3 )
-#define TCA6416AR_ADDRESS               ( 0x20 )
-#define TCA6416AR_CONFIGURATION_0       ( 0x06 )
-#define TCA6416AR_OUTPUT_PORT_0         ( 0x02 )
-#define TCA6416AR_READ_BUFF_SIZE        ( 1 )
-#define TCA6416AR_READ_BYTES_TO_RECEIVE ( 1 )
-#define TCA6416AR_WRITE_BUFF_SIZE       ( 2 )
-
 
 /* FELIX Reset Configuration Mailbox: Lets the host reboot the card from another sd boot file without powercycle.
 (host: BAR0 + 0x0FFFF000).
@@ -343,49 +334,6 @@ static FW_IF_SMBUS_INIT_CFG mySMBusIf =
 /* Private Function declarations                                              */
 /******************************************************************************/
 
-/**
- * @brief   Read from Tca6416a register via i2c.
- *
- * @param   ucI2cNum         I2c Bus Number
- * @param   ucSlaveAddr      I2c Slave Addr
- * @param   ucRegister       I2c Slave register
- * @param   pucRegisterValue Pointer to register value
- *
- * @return  OK               Register value read successfully
- *          ERROR            Error reading register value
- *
- */
-static uint8_t ucTca6416aRegisterRead( uint8_t ucI2cNum,
-                                       uint8_t ucSlaveAddr,
-                                       uint8_t ucRegister,
-                                       uint8_t *pucRegisterValue );
-
-/**
- * @brief   Write to Tca6416a register via i2c.
- *
- * @param   ucI2cNum         I2c Bus Number
- * @param   ucSlaveAddr      I2c Slave Addr
- * @param   ucRegister       I2c Slave register
- * @param   ucRegisterValue  Register value to write
- *
- * @return  OK               Register value written successfully
- *          ERROR            Error writting register value
- *
- */
-static uint8_t ucTca6416aRegisterWrite( uint8_t ucI2cNum,
-                                        uint8_t ucSlaveAddr,
-                                        uint8_t ucRegister,
-                                        uint8_t ucRegisterValue );
-
-/**
- * @brief   Enable SMBus PCIe Link.
- *
- * @return  OK               SMBus PCIe Link enabled successfully
- *          ERROR            Error enabling SMBus PCIe Link
- *
- */
-static uint8_t ucEnableSMBusPcieLink( void );
-
 static void vFelixResetPublish( volatile FELIX_RESET_AMC_AREA *pxAmc );
 
 static void vFelixResetTask( void *pvTaskParam );
@@ -396,93 +344,6 @@ static void vFelixResetStart( void );
 /******************************************************************************/
 /* Private Function implementations                                           */
 /******************************************************************************/
-
-/**
- * @brief   Read from Tca6416a register via i2c.
- */
-uint8_t ucTca6416aRegisterRead( uint8_t ucI2cNum, uint8_t ucSlaveAddr, uint8_t ucRegister, uint8_t *pucRegisterValue )
-{
-    uint8_t ucStatus = ERROR;
-    uint8_t pucSendData[ TCA6416AR_READ_BUFF_SIZE ] =
-    {
-        0
-    };
-
-    if( NULL != pucRegisterValue )
-    {
-        pucSendData[ 0 ] = ucRegister;
-
-        ucStatus = iI2C_SendRecv( ucI2cNum,
-                                  ucSlaveAddr,
-                                  pucSendData,
-                                  TCA6416AR_READ_BUFF_SIZE,
-                                  pucRegisterValue,
-                                  TCA6416AR_READ_BYTES_TO_RECEIVE );
-    }
-
-    return ucStatus;
-}
-
-/**
- * @brief   Write to Tca6416a register via i2c.
- */
-uint8_t ucTca6416aRegisterWrite( uint8_t ucI2cNum, uint8_t ucSlaveAddr, uint8_t ucRegister, uint8_t ucRegisterValue )
-{
-    uint8_t ucStatus = ERROR;
-    uint8_t pucSendData[ TCA6416AR_WRITE_BUFF_SIZE ] =
-    {
-        0
-    };
-
-    pucSendData[ 0 ] = ucRegister;
-    pucSendData[ 1 ] = ucRegisterValue;
-
-    ucStatus = iI2C_Send( ucI2cNum, ucSlaveAddr, pucSendData, TCA6416AR_WRITE_BUFF_SIZE );
-
-    return ucStatus;
-}
-
-/**
- * @brief   Enable SMBus PCIe Link.
- */
-uint8_t ucEnableSMBusPcieLink( void )
-{
-    uint8_t ucStatus        = ERROR;
-    uint8_t ucI2cNum        = HAL_I2C_BUS_0_DEVICE_ID;
-    uint8_t ucRegisterValue = 0;
-
-    /* Read Configuration 0 Register - Command Byte 06 */
-    ucStatus = ucTca6416aRegisterRead( ucI2cNum, TCA6416AR_ADDRESS, TCA6416AR_CONFIGURATION_0, &ucRegisterValue );
-
-    if( OK == ucStatus )
-    {
-        /* Write Configuration 0 Register setting bit 3 to 0 - Command Byte 06 */
-        ucRegisterValue = ( ucRegisterValue & ~( TCA6416AR_BIT_3 ) );
-        ucStatus        = ucTca6416aRegisterWrite( ucI2cNum,
-                                                   TCA6416AR_ADDRESS,
-                                                   TCA6416AR_CONFIGURATION_0,
-                                                   ucRegisterValue );
-
-        if( OK == ucStatus )
-        {
-            /* Read Output 0 Register - Command Byte 02 */
-            ucStatus = ucTca6416aRegisterRead( ucI2cNum, TCA6416AR_ADDRESS, TCA6416AR_OUTPUT_PORT_0, &ucRegisterValue );
-
-            if( OK == ucStatus )
-            {
-                /* Write Output 0 Register setting bit 3 to 1 - Command Byte 02 */
-                ucRegisterValue = ( ucRegisterValue | ( TCA6416AR_BIT_3 ) );
-                ucStatus        = ucTca6416aRegisterWrite( ucI2cNum,
-                                                           TCA6416AR_ADDRESS,
-                                                           TCA6416AR_OUTPUT_PORT_0,
-                                                           ucRegisterValue );
-            }
-        }
-    }
-
-    return ucStatus;
-}
-
 
  /**
    * @brief   FELIX: poll the reset mailbox every FELIX_RESET_POLL_MS and reset the
@@ -583,6 +444,7 @@ static void vFelixResetStart( void )
     }
 }
 
+
 /******************************************************************************/
 /* Public Function implementations                                            */
 /******************************************************************************/
@@ -604,21 +466,6 @@ int iFAL_Initialise( uint64_t *pullAmcInitStatus )
 
     if( NULL != pullAmcInitStatus )
     {
-        if( AMC_CFG_I2C_INITIALISED == ( *pullAmcInitStatus & AMC_CFG_I2C_INITIALISED ) )
-        {
-            /* Enable SMBus PCIe link */
-            if( OK == ucEnableSMBusPcieLink() )
-            {
-                PLL_LOG( FAL_PROFILE_NAME, "PCIe SMBus link enabled\n\r" );
-                *pullAmcInitStatus |= AMC_CFG_SMBUS_PCIE_LINK_INITIALISED;
-            }
-            else
-            {
-                PLL_ERR( FAL_PROFILE_NAME, "Error enabling PCIe SMBus link \n\r" );
-                iStatus = ERROR;
-            }
-        }
-
         /* Init the Muxed Device FAL */
         if( AMC_CFG_I2C_INITIALISED == ( *pullAmcInitStatus & AMC_CFG_I2C_INITIALISED ) )
         {

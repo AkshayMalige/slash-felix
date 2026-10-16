@@ -1,3 +1,8 @@
+FELIX: add the "felix" AMC profile to AMD's build. AMD's CMakeLists only knows
+v80, v70 and Linux (anything else builds v80). The felix profile adds
+felix_sensors.c, uses the SMBus stub (FELIX has no SMBus IP / BMC path) and keeps
+AMD's format/address warnings in that stub from failing the build.
+
 --- a/fw/AMC/CMakeLists.txt
 +++ b/fw/AMC/CMakeLists.txt
 @@ -110,6 +110,13 @@
@@ -7,7 +12,7 @@
 +        elseif(PROFILE MATCHES "^(felix)$")
 +            include_directories(src/profiles/felix)
 +            set(PROFILE "felix")
-+            set(PROFILE_FAL_PATH "src/profiles/felix/profile_fal.c")
++            set(PROFILE_FAL_PATH "src/profiles/felix/profile_fal.c;src/profiles/felix/felix_sensors.c")
 +            set(PROFILE_DEBUG_MENU_PATH "src/profiles/felix/profile_debug_menu.c")
 +            set(FW_IF_SMBUS_BLOCK_IO_PATH "src/fal/smbus/fw_if_smbus_stub.c")
 +            set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-error=format -Wno-error=address")

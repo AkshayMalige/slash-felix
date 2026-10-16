@@ -57,6 +57,11 @@ sed -i "/^    DIST_ID_RHEL,$/a\\    DIST_ID_ROCKY," "${PKG_PY}"
 sed -i "s/DIST_RPM = \[DIST_ID_CENTOS, DIST_ID_REDHAT, DIST_ID_REDHAT2, DIST_ID_SLES, DIST_ID_RHEL\]/DIST_RPM = [DIST_ID_CENTOS, DIST_ID_REDHAT, DIST_ID_REDHAT2, DIST_ID_SLES, DIST_ID_RHEL, DIST_ID_ROCKY]/" "${PKG_PY}"
 sed -i "s/DIST_ID_CENTOS, DIST_ID_REDHAT, DIST_ID_REDHAT2, DIST_ID_RHEL\]/DIST_ID_CENTOS, DIST_ID_REDHAT, DIST_ID_REDHAT2, DIST_ID_RHEL, DIST_ID_ROCKY]/" "${GEN_PKG_PY}"
 
+# AVED's ami_hwmon.c lists curr11_status twice, so the hwmon probe fails (-EEXIST)
+# on cards with more than 10 current sensors. Remove the duplicate.
+sed -i '/\/\* Extra attributes \*\//{n;/&sensor_dev_attr_curr11_status\.dev_attr\.attr,/d}' "${AMI_SRC_DIR}/driver/ami_hwmon.c"
+[ "$(grep -c 'sensor_dev_attr_curr11_status.dev_attr.attr' "${AMI_SRC_DIR}/driver/ami_hwmon.c")" -eq 1 ]
+
 cd "${AMI_SRC_DIR}"
 # --no_driver skips a pre-flight driver compilation check (build+clean) only;
 # it does NOT affect which files are included in the package.

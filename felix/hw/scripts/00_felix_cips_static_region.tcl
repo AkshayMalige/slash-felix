@@ -1253,7 +1253,7 @@ proc create_hier_cell_aved { parentCell nameHier } {
       PS_GEN_IPI5_MASTER {R5_1} \
       PS_GEN_IPI6_ENABLE {1} \
       PS_GEN_IPI6_MASTER {R5_1} \
-      PS_I2C0_PERIPHERAL {{ENABLE 1} {IO {PS_MIO 2 .. 3}}} \
+      PS_I2C0_PERIPHERAL {{ENABLE 1} {IO {PMC_MIO 46 .. 47}}} \
       PS_I2C1_PERIPHERAL {{ENABLE 1} {IO {PS_MIO 0 .. 1}}} \
       PS_IRQ_USAGE {{CH0 1} {CH1 1} {CH10 0} {CH11 0} {CH12 0} {CH13 0} {CH14 0} {CH15 0} {CH2 0} {CH3 0} {CH4 0} {CH5 0} {CH6 0} {CH7 0} {CH8 0} {CH9 0}} \
       PS_M_AXI_LPD_DATA_WIDTH {32} \
@@ -1271,7 +1271,7 @@ proc create_hier_cell_aved { parentCell nameHier } {
       PS_TTC2_PERIPHERAL_ENABLE {1} \
       PS_TTC3_PERIPHERAL_ENABLE {1} \
       PS_UART0_PERIPHERAL {{ENABLE 1} {IO {PMC_MIO 42 .. 43}}} \
-      PS_UART1_PERIPHERAL {{ENABLE 1} {IO {PMC_MIO 46 .. 47}}} \
+      PS_UART1_PERIPHERAL {{ENABLE 0} {IO {PMC_MIO 46 .. 47}}} \
       PS_USE_M_AXI_LPD {1} \
       PS_USE_NOC_LPD_AXI0 {1} \
       PS_USE_PMCPL_CLK0 {1} \

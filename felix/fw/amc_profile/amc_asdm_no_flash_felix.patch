@@ -1,0 +1,29 @@
+FELIX: let AMD's sensor app (ASDM) start without flash and board EEPROM.
+ASDM normally waits for the flash proxy (APC) and the EEPROM. FELIX has no OSPI
+flash (its flash is QSPI, not supported by AVED) and a blank EEPROM, so ASDM would
+never start and the host would see no sensors. Drop this patch once flash and
+EEPROM work on FELIX.
+
+--- a/fw/AMC/src/common/include/amc_cfg.h
++++ b/fw/AMC/src/common/include/amc_cfg.h
+@@ -65,9 +65,7 @@
+ #define AMC_CFG_BMC_PREREQUISITES ( ( uint64_t )( AMC_CFG_SMBUS_PCIE_LINK_INITIALISED | \
+                                                   AMC_CFG_SMBUS_FAL_INITIALISED ) )
+ 
+-#define AMC_CFG_ASDM_PREREQUISITES ( ( uint64_t )( AMC_CFG_APC_INITIALISED | \
+-                                                   AMC_CFG_ASC_INITIALISED | \
+-                                                   AMC_CFG_EEPROM_INITIALISED ) )
++#define AMC_CFG_ASDM_PREREQUISITES ( ( uint64_t )( AMC_CFG_ASC_INITIALISED ) )
+ 
+ #define AMC_CFG_IN_BAND_PREREQUISITES ( ( uint64_t )( AMC_CFG_AMI_INITIALISED | \
+                                                       AMC_CFG_ASDM_INITIALISED ) )
+--- a/fw/AMC/src/apps/asdm/asdm.c
++++ b/fw/AMC/src/apps/asdm/asdm.c
+@@ -1013,7 +1013,6 @@
+         else
+         {
+             INC_ERROR_COUNTER( ASDM_ERRORS_INIT_BIND_APC_CB_FAILED )
+-            iStatus = ERROR;
+         }
+ 
+         if( OK == iStatus )

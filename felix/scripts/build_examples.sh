@@ -18,6 +18,15 @@ for ex in "$@"; do
     echo "########## $ex: ${vbins[*]} + host programs ##########"
     cmake -S "$src" -B "$build" -DSLASH_USE_REPO="${SLASH_USE_REPO:-ON}"
     cmake --build "$build" -j "$(nproc)"
+    # A vbin only loads on the shell it was linked against, but make does not see a new
+    # staged shell as a dependency: relink any vbin older than the staged shell.
+    shell="$REPO/linker/slashkit/resources/static_shell_compute/static_shell_slash.dcp"
+    for v in "${vbins[@]}"; do
+        if [ "$PLATFORM" = hw ] && [ -f "$build/$v.vbin" ] && [ "$build/$v.vbin" -ot "$shell" ]; then
+            echo "$v.vbin is older than the staged shell: relinking"
+            rm -rf -- "${build:?}/$v.vbin" "${build:?}/$v.vbin.prj"
+        fi
+    done
     cmake --build "$build" --target "${vbins[@]}"
     for v in "${vbins[@]}"; do ls -la "$build/$v.vbin"; done
     echo "EXAMPLE_DONE: $ex"

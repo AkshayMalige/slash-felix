@@ -18,6 +18,8 @@ usage: $0 status
        sudo $0 reboot --image N [--delay S] [--hold S] [--card ADDR] [--expect slash|felix] [--yes]
        sudo $0 wait-reboot [--settle S] [--expect slash|felix] [--yes]
        sudo $0 recover
+       sudo $0 flxnet-up [--card ADDR]
+       sudo $0 flxnet-down
        $0 build-flxnet
 
   status        which design the card runs, link state, AMC reset mailbox, flxnet driver
@@ -29,6 +31,9 @@ usage: $0 status
   wait-reboot   any mode: take the link down, wait until the card is rebooted by
                 other means (e.g. felix-to-slash on the card console), bring the link up
   recover       link up and rescan after an interrupted run
+  flxnet-up     FELIX mode: load the flxnet driver, bring flxnet0 up, print the card's address
+                for ssh; unload it with flxnet-down before the card reboots
+  flxnet-down   unload the flxnet driver
   build-flxnet  build the flxnet driver for this kernel in $FLXNET
 
   options: --delay S  the card reboots S s after the request (default 8)
@@ -239,7 +244,19 @@ flxnet_up() {
         sleep 0.2; t=$((t + 1))
         [ "$t" -lt 25 ] || die "flxnet_pcie did not create flxnet0 (dmesg | grep flxnet)"
     done
-    command -v nmcli > /dev/null && nmcli device set flxnet0 managed no > /dev/null 2>&1
+    # NetworkManager may claim flxnet0 and remove its IPv6 link-local address: release it,
+    # then make sure the kernel creates a fresh link-local address.
+    if command -v nmcli > /dev/null && nmcli -t -f RUNNING general 2>/dev/null | grep -qx running; then
+        t=0
+        until nmcli -t -f DEVICE device 2>/dev/null | grep -qx flxnet0; do
+            sleep 0.2; t=$((t + 1))
+            [ "$t" -lt 25 ] || break
+        done
+        nmcli device set flxnet0 managed no > /dev/null 2>&1 || log "WARNING: NetworkManager did not release flxnet0"
+    fi
+    ip link set flxnet0 down
+    sysctl -qw net.ipv6.conf.flxnet0.disable_ipv6=0 net.ipv6.conf.flxnet0.addr_gen_mode=0
+    ip -6 addr flush dev flxnet0 scope link
     ip link set flxnet0 up || die "cannot bring flxnet0 up"
     t=0
     until [ -n "$(flxnet_addr)" ]; do
@@ -252,7 +269,7 @@ flxnet_find() {
     local own a end=$((SECONDS + 90))
     own=$(flxnet_addr)
     while [ "$SECONDS" -lt "$end" ]; do
-        for a in $(ping -6 -n -c 3 -i 0.5 -w 3 "ff02::1%flxnet0" 2>/dev/null | grep -oE 'from fe80:[0-9a-f:]+' | cut -d' ' -f2 | sort -u); do
+        for a in $(ping -6 -n -c 2 -w 3 "ff02::1%flxnet0" 2>/dev/null | grep -oE 'from fe80:[0-9a-f:]+' | cut -d' ' -f2 | sort -u); do
             grep -qxF "$a" <<< "$own" || { echo "$a"; return 0; }
         done
     done
@@ -418,6 +435,29 @@ case "$CMD" in
         sleep "$SETTLE"
         link_enable 60
         came_up
+        ;;
+    flxnet-up)
+        need_root
+        MODE=$(mode_now)
+        [ "$MODE" = FELIX ] || die "the card is in $MODE mode; flxnet exists only in FELIX mode"
+        check_unbound
+        flxnet_check
+        flxnet_up
+        if [ -z "$CARD" ]; then
+            log "looking for FELIX Linux on flxnet0 (up to 90 s; it boots ~1 min after the switch into FELIX)"
+            CARD=$(flxnet_find) || die "FELIX Linux does not answer on flxnet0"
+        fi
+        FLXNET_UP=0
+        log "FELIX Linux answers at $CARD%flxnet0"
+        echo "ssh root@$CARD%flxnet0      (unload before any card reboot: sudo $0 flxnet-down)"
+        ;;
+    flxnet-down)
+        need_root
+        if flxnet_loaded; then
+            flxnet_unload || die "the flxnet driver could not be unloaded"
+        else
+            log "flxnet driver not loaded"
+        fi
         ;;
     recover)
         need_root
