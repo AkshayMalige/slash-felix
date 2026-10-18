@@ -36,6 +36,7 @@ from slashkit.emit.hw.user_region.terminator_ctx import build_host_noc_terminato
 from slashkit.emit.hw.user_region.debug_ctx import build_system_ila_debug_context, build_debug_hub_slaves
 from slashkit.emit.hw.service_region.network_ctx import build_network_axis_context
 from slashkit.emit.hw.service_region.stream_ctx import build_stream_connect_context
+from slashkit.emit.hw.user_region.gt_ctx import build_gt_axis_context
 from slashkit.emit.hw.user_region.host_ctx import build_host_smartconnect_context
 from slashkit.emit.hw.user_region.addr_ctx import build_axilite_address_context
 from slashkit.emit.hw.user_region.param_ctx import build_data_width_param_context
@@ -264,11 +265,17 @@ def generate_tcl(config: LinkerConfiguration) -> None:
                         "HBM); use DDR0-DDR3 instead."
                     )
 
+    gt_ctx = build_gt_axis_context(instances, streams, config.board.gt_streams)
+    streams = gt_ctx.pop("streams_leftover")
+
     # Debug hub S_AXI joins the AXI-Lite control fan-out as an extra slave
     # (empty when no debug nets are configured).
     hub_slaves = build_debug_hub_slaves(cfg.debug)
 
     ctx = build_kernel_add_context(instances)
+    ctx.update(gt_ctx)
+    ctx["gt_streams"] = config.board.gt_streams
+    ctx["gt_stream_mbps"] = config.board.gt_stream_mbps
     ctx.update(build_data_width_param_context(instances))
     ctx.update(build_axilite_smartconnect_context(
         instances, extra_slaves=[s["dst_pin"] for s in hub_slaves]))

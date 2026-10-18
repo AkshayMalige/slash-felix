@@ -22,10 +22,14 @@ lassign [felix_build_id $repo] ::build_id_lo ::build_id_hi
 puts "SHELL_BUILD_ID: lo=$::build_id_lo hi=$::build_id_hi"
 
 set ::felix_user_clk_mhz 400
+set ::felix_gt_quads {106 110}
+set ::felix_gt_stream_mbps 14000
 
 create_project felix_slash [file join $here .. proj] -part xcvp1552-vsva3340-2MHP-e-S -force
 set_property ip_repo_paths $iprepo [current_project]
 update_ip_catalog -rebuild
+add_files -norecurse [glob [file join $here .. rtl *.v]]
+update_compile_order -fileset sources_1
 source [file join $here 00_felix_cips_static_region.tcl]
 set_property ip_repo_paths $iprepo [current_project]
 update_ip_catalog -rebuild

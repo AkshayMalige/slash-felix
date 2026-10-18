@@ -51,6 +51,19 @@ def test_board_file_is_parsed(tmp_path):
     assert profile == FELIX_PROFILE
 
 
+def test_gt_stream_fields_are_parsed(tmp_path):
+    with _fake_package(tmp_path, {**FELIX, "gt_streams": 4, "gt_stream_mbps": 12900}):
+        profile = load_board_profile("any.package")
+    assert (profile.gt_streams, profile.gt_stream_mbps) == (4, 12900)
+    assert (BoardProfile().gt_streams, BoardProfile().gt_stream_mbps) == (0, 0)
+
+
+@pytest.mark.parametrize("content", [{"gt_streams": -1}, {"gt_streams": True}, {"gt_stream_mbps": "12900"}])
+def test_invalid_gt_stream_fields_are_rejected(tmp_path, content):
+    with _fake_package(tmp_path, content), pytest.raises(ValueError):
+        load_board_profile("any.package")
+
+
 @pytest.mark.parametrize("content", [
     {"part": ""},
     {"hbm_axi_ports": "no"},

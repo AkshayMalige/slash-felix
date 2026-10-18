@@ -62,6 +62,27 @@ set_property -dict {CONFIG.NUM_SI {1} CONFIG.NUM_MI {4}} $sc
 connect_bd_intf_net [get_bd_intf_pins axi_noc_0/M00_AXI] [get_bd_intf_pins smartconnect_0/S00_AXI]
 foreach i {0 1 2 3} { connect_bd_intf_net [get_bd_intf_pins smartconnect_0/M0${i}_AXI] [get_bd_intf_pins ddr_bandwidth_${i}/s_axi_control] }
 
+# GT streams from the static shell (25_felix_gt.tcl): gt_axis_noc_s_<k> receives quad k's RX
+# stream, gt_axis_noc_<k> sends the kernel's TX stream. Strategy and bandwidth as on the static end.
+# Keep these cells' settings textually identical to linker slash_compute.tcl (e.g. write_bw {N}):
+# a kernel image's stream cells join the shell's locked NoC paths only if the text matches;
+# otherwise the paths stop at the region boundary and the streams carry no data.
+if {![info exists ::felix_gt_quads]} { set ::felix_gt_quads {} }
+for {set k 0} {$k < [llength $::felix_gt_quads]} {incr k} {
+    create_bd_intf_port -mode Slave  -vlnv xilinx.com:interface:inis_rtl:1.0 S_GT_INIS$k
+    create_bd_intf_port -mode Master -vlnv xilinx.com:interface:inis_rtl:1.0 M_GT_INIS$k
+    set r [create_bd_cell -type ip -vlnv xilinx.com:ip:axis_noc:1.0 gt_axis_noc_s_$k]
+    set_property -dict {CONFIG.NUM_NSI {1} CONFIG.NUM_SI {0}} $r
+    set_property -dict {CONFIG.TDATA_NUM_BYTES {64} CONFIG.TDEST_WIDTH {0} CONFIG.TID_WIDTH {0} CONFIG.CATEGORY {pl}} [get_bd_intf_pins gt_axis_noc_s_$k/M00_AXIS]
+    set_property -dict [list CONFIG.INI_STRATEGY {load} CONFIG.CONNECTIONS "M00_AXIS {write_bw {$::felix_gt_stream_mbps}}"] [get_bd_intf_pins gt_axis_noc_s_$k/S00_INIS]
+    connect_bd_intf_net [get_bd_intf_ports S_GT_INIS$k] [get_bd_intf_pins gt_axis_noc_s_$k/S00_INIS]
+    set t [create_bd_cell -type ip -vlnv xilinx.com:ip:axis_noc:1.0 gt_axis_noc_$k]
+    set_property -dict {CONFIG.NUM_MI {0} CONFIG.NUM_NMI {1}} $t
+    set_property -dict [list CONFIG.TDATA_NUM_BYTES {64} CONFIG.CATEGORY {pl} CONFIG.CONNECTIONS "M00_INIS {write_bw {$::felix_gt_stream_mbps}}"] [get_bd_intf_pins gt_axis_noc_$k/S00_AXIS]
+    set_property CONFIG.INI_STRATEGY {driver} [get_bd_intf_pins gt_axis_noc_$k/M00_INIS]
+    connect_bd_intf_net [get_bd_intf_pins gt_axis_noc_$k/M00_INIS] [get_bd_intf_ports M_GT_INIS$k]
+}
+
 set rstpins [dict create]
 foreach c [get_bd_cells *] {
     set grp [expr {[string match ddr_bandwidth_* [get_property NAME $c]] ? [get_property NAME $c] : "infra"}]

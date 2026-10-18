@@ -27,6 +27,8 @@ rm -rf "${SSC}/slash_base" && mv "${SSC}/slash_base.tmp" "${SSC}/slash_base"
 echo "  staged: slash_base BD -> ${SSC#$REPO/}/slash_base/"
 USER_CLK_MHZ=$(sed -nE 's/^set ::felix_user_clk_mhz ([0-9]+).*/\1/p' "${REPO}/felix/hw/scripts/run_all.tcl")
 [ -n "$USER_CLK_MHZ" ] || { echo "ERROR: felix_user_clk_mhz not found in run_all.tcl" >&2; exit 1; }
+GT_STREAMS=$(sed -nE 's/^set ::felix_gt_quads \{([^}]*)\}.*/\1/p' "${REPO}/felix/hw/scripts/run_all.tcl" | wc -w)
+GT_MBPS=$(sed -nE 's/^set ::felix_gt_stream_mbps ([0-9]+).*/\1/p' "${REPO}/felix/hw/scripts/run_all.tcl")
 cat > "${SSC}/board.json" <<EOF
 {
   "board": "felix",
@@ -34,7 +36,9 @@ cat > "${SSC}/board.json" <<EOF
   "hbm_axi_ports": false,
   "rm_reset_bufg": false,
   "user_clock_at_source": true,
-  "max_user_clock_hz": ${USER_CLK_MHZ}000000
+  "max_user_clock_hz": ${USER_CLK_MHZ}000000,
+  "gt_streams": ${GT_STREAMS},
+  "gt_stream_mbps": ${GT_MBPS:-0}
 }
 EOF
 echo "  wrote:  ${SSC#$REPO/}/board.json"

@@ -16,11 +16,14 @@ class BoardProfile:
     rm_reset_bufg: bool = True
     user_clock_at_source: bool = False
     max_user_clock_hz: int = 0
+    gt_streams: int = 0
+    gt_stream_mbps: int = 0
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BoardProfile":
         unknown = set(data) - {"board", "part", "hbm_axi_ports", "rm_reset_bufg",
-                               "user_clock_at_source", "max_user_clock_hz"}
+                               "user_clock_at_source", "max_user_clock_hz",
+                               "gt_streams", "gt_stream_mbps"}
         if unknown:
             raise ValueError(
                 f"Unknown key(s) in {BOARD_FILE_NAME}: {', '.join(sorted(unknown))}")
@@ -40,9 +43,15 @@ class BoardProfile:
         max_hz = data.get("max_user_clock_hz", defaults.max_user_clock_hz)
         if isinstance(max_hz, bool) or not isinstance(max_hz, int) or max_hz < 0:
             raise ValueError(f"'max_user_clock_hz' in {BOARD_FILE_NAME} must be a non-negative integer")
+        gt = {}
+        for key in ("gt_streams", "gt_stream_mbps"):
+            v = data.get(key, getattr(defaults, key))
+            if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                raise ValueError(f"'{key}' in {BOARD_FILE_NAME} must be a non-negative integer")
+            gt[key] = v
         return cls(name=str(data.get("board", defaults.name)), part=part,
                    hbm_axi_ports=hbm, rm_reset_bufg=bufg,
-                   user_clock_at_source=at_source, max_user_clock_hz=max_hz)
+                   user_clock_at_source=at_source, max_user_clock_hz=max_hz, **gt)
 
 
 def load_board_profile(static_shell_package: str) -> BoardProfile:

@@ -73,10 +73,13 @@ set_property -dict [list \
   CONFIG.REMAPS {M01_INI {{0x20108000000 0x00038000000 0x08000000} {0x60000000000 0x60000000000 0x400000000}}} \
 ] [get_bd_intf_pins static_region/noc/axi_noc_cips/S00_AXI]
 
+source [file join [file dirname [file normalize [info script]]] 25_felix_gt.tcl]
+
 save_bd_design
 puts "TOP_CELLS: [get_bd_cells /*]"
 assign_bd_address
 puts "ASSIGN_DONE"
+felix_gt_check_addresses
 
 proc pin_seg {space segpat off rng} {
     set sp [get_bd_addr_spaces $space]

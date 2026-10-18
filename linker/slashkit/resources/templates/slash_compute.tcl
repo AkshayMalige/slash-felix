@@ -716,6 +716,26 @@ update_compile_order -fileset sources_1
   [get_bd_pins axi_noc_0/aclk0] \
   [get_bd_pins c_shift_ram_0/CLK]
 
+# === GT streams of the shell (FELIX): RX gt_axis_noc_s_<k>, TX gt_axis_noc_<k> ===
+# Settings must stay textually identical to felix/hw/scripts/20_slash_base.tcl: these cells join
+# the shell's locked NoC paths only if the text matches.
+{% for k in range(gt_streams|default(0)) %}
+set gt_axis_noc_s_{{ k }} [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_noc:1.0 gt_axis_noc_s_{{ k }} ]
+set_property -dict [list CONFIG.NUM_NSI {1} CONFIG.NUM_SI {0}] $gt_axis_noc_s_{{ k }}
+set_property -dict [list CONFIG.TDATA_NUM_BYTES {64} CONFIG.TDEST_WIDTH {0} CONFIG.TID_WIDTH {0} CONFIG.CATEGORY {pl}] [get_bd_intf_pins /gt_axis_noc_s_{{ k }}/M00_AXIS]
+set_property -dict [list CONFIG.INI_STRATEGY {load} CONFIG.CONNECTIONS "M00_AXIS {write_bw {{ '{' ~ gt_stream_mbps ~ '}' }}}"] [get_bd_intf_pins /gt_axis_noc_s_{{ k }}/S00_INIS]
+connect_bd_intf_net [get_bd_intf_ports S_GT_INIS{{ k }}] [get_bd_intf_pins gt_axis_noc_s_{{ k }}/S00_INIS]
+set gt_axis_noc_{{ k }} [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_noc:1.0 gt_axis_noc_{{ k }} ]
+set_property -dict [list CONFIG.NUM_MI {0} CONFIG.NUM_NMI {1}] $gt_axis_noc_{{ k }}
+set_property -dict [list CONFIG.TDATA_NUM_BYTES {64} CONFIG.CATEGORY {pl} CONFIG.CONNECTIONS "M00_INIS {write_bw {{ '{' ~ gt_stream_mbps ~ '}' }}}"] [get_bd_intf_pins /gt_axis_noc_{{ k }}/S00_AXIS]
+set_property CONFIG.INI_STRATEGY {driver} [get_bd_intf_pins /gt_axis_noc_{{ k }}/M00_INIS]
+connect_bd_intf_net [get_bd_intf_pins gt_axis_noc_{{ k }}/M00_INIS] [get_bd_intf_ports M_GT_INIS{{ k }}]
+connect_bd_net [get_bd_pins user_clk] [get_bd_pins gt_axis_noc_s_{{ k }}/aclk0] [get_bd_pins gt_axis_noc_{{ k }}/aclk0]
+{% endfor %}
+{% for p in gt_rx_tready_tie_pins|default([]) %}
+connect_bd_net [get_bd_pins xlconstant_0/dout] [get_bd_pins {{ p }}]
+{% endfor %}
+
 # === Instantiate kernel IPs ===
 {% for name, inst in instances.items() %}
 set {{ name }} [ create_bd_cell -type ip -vlnv {{ inst.kernel.vlnv }} {{ name }} ]
@@ -909,6 +929,9 @@ connect_bd_intf_net [get_bd_intf_pins {{ r.sc_name }}/M00_AXI] [get_bd_intf_pins
 
 # === AXIS stream connections from config ===
 {% for e in axis_streams|default([]) %}
+connect_bd_intf_net [get_bd_intf_pins {{ e.src_pin }}] [get_bd_intf_pins {{ e.dst_pin }}]
+{% endfor %}
+{% for e in gt_to_fabric|default([]) + gt_from_fabric|default([]) %}
 connect_bd_intf_net [get_bd_intf_pins {{ e.src_pin }}] [get_bd_intf_pins {{ e.dst_pin }}]
 {% endfor %}
 
