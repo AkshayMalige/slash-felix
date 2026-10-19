@@ -1,5 +1,5 @@
 // Input buffers and frequency counters for the GT reference clock pins of the FireFly quads.
-// Input i = 2*q + r: q = quad 106, 110, 111, 112; r = REFCLK0 (Si5345) or REFCLK1 (Si570).
+// Input i = 2*q + r: q = quad 106, 110, 111, 112; r = REFCLK0 (Si5395) or REFCLK1 (Si570).
 // Each pin pair gets an IBUFDS_GTE5: O (refclk_o<i>) goes to a GT quad that uses this reference,
 // ODIV2 (same frequency) through a BUFG_GT (refclk_mon<i>) to a counter and to that quad's own counter.
 //

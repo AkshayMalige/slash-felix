@@ -22,7 +22,8 @@ lassign [felix_build_id $repo] ::build_id_lo ::build_id_hi
 puts "SHELL_BUILD_ID: lo=$::build_id_lo hi=$::build_id_hi"
 
 set ::felix_user_clk_mhz 400
-set ::felix_gt_quads {106 110}
+# GT quads in the shell (kernel stream gt_k is the k-th quad) and NoC bandwidth per stream in MB/s
+set ::felix_gt_quads {106 110 111 112}
 set ::felix_gt_stream_mbps 14000
 
 create_project felix_slash [file join $here .. proj] -part xcvp1552-vsva3340-2MHP-e-S -force

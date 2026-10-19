@@ -3,13 +3,17 @@
 // every clock, so when no beat is waiting it sends zeros and counts an underflow (counted only
 // after the first beat, so the idle time before a kernel starts is not counted). It starts
 // sending only when PREFILL beats are buffered, and again after an underflow, so NoC delivery
-// jitter is absorbed by the FIFO instead of inserting zeros into the lanes.
+// jitter is absorbed by the FIFO instead of inserting zeros into the lanes. While the host holds
+// the streams (drop) it takes every beat and drops it: refusing beats would leave the kernel's data
+// waiting in the NoC, and a kernel load fails while data waits there. While the GT is not ready
+// (rst without drop) beats wait.
 module felix_gt_tx_adapter #(
     parameter FIFO_DEPTH = 512,
     parameter PREFILL    = 256
 ) (
     input  wire         clk,
     input  wire         rst,
+    input  wire         drop,
     input  wire [511:0] s_axis_tdata,
     input  wire [63:0]  s_axis_tkeep,
     input  wire         s_axis_tlast,
@@ -33,7 +37,8 @@ module felix_gt_tx_adapter #(
 
     wire rd_en = !rst && !have_high && !empty && !rd_rst_busy && (running || rd_count >= PREFILL);
 
-    assign s_axis_tready = !rst && !full && !wr_rst_busy;
+    // Held: always ready (beats are dropped). Otherwise ready while the FIFO has room.
+    assign s_axis_tready = drop || (!rst && !full && !wr_rst_busy);
 
     xpm_fifo_sync #(
         .FIFO_MEMORY_TYPE ("auto"),
@@ -46,7 +51,7 @@ module felix_gt_tx_adapter #(
         .USE_ADV_FEATURES ("0400")
     ) fifo (
         .wr_clk(clk), .rst(rst),
-        .din(s_axis_tdata), .wr_en(s_axis_tvalid && s_axis_tready), .full(full),
+        .din(s_axis_tdata), .wr_en(s_axis_tvalid && s_axis_tready && !rst), .full(full),
         .wr_rst_busy(wr_rst_busy),
         .dout(dout), .rd_en(rd_en), .empty(empty), .rd_rst_busy(rd_rst_busy),
         .sleep(1'b0), .injectsbiterr(1'b0), .injectdbiterr(1'b0),

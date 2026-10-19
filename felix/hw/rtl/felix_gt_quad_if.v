@@ -5,6 +5,7 @@
 //   0x00 ID         RO  0x46475431
 //   0x04 CTRL       RW  [0] rst_all [1] rst_tx_pll_and_datapath [2] rst_tx_datapath
 //                       [3] rst_rx_pll_and_datapath [4] rst_rx_datapath [8] hold lane adapters in reset
+//                       (RX sends nothing, TX takes and drops every beat)
 //                       (reset value 0x100: no stream traffic into the kernel region until the host
 //                       clears bit 8; a kernel-region reload with the streams running fails)
 //   0x08 LOOPBACK   RW  3 bits per lane at [3L+2:3L] (0 normal, 2 near-end PMA)
@@ -189,8 +190,10 @@ module felix_gt_quad_if #(
     xpm_cdc_single #(.DEST_SYNC_FF(3), .SRC_INPUT_REG(0)) cdc_rx_done (
         .src_clk(1'b0), .src_in(gt_rst_rx_done), .dest_clk(rx_usrclk), .dest_out(rx_done_s));
 
-    reg tx_rst, rx_rst;
+    reg tx_rst, rx_rst, tx_drop;
     always @(posedge tx_usrclk) tx_rst <= !tx_done_s || tx_ctl[20];
+    // While held, the TX adapter also drops the beats it gets (see felix_gt_tx_adapter)
+    always @(posedge tx_usrclk) tx_drop <= tx_ctl[20];
     always @(posedge rx_usrclk) rx_rst <= !rx_done_s || rx_ctl[21];
 
     // ---------------- lane adapters ----------------
@@ -198,7 +201,7 @@ module felix_gt_quad_if #(
     wire [31:0] tx_beats, tx_underflows, rx_beats, rx_drops;
 
     felix_gt_tx_adapter tx_adapter (
-        .clk(tx_usrclk), .rst(tx_rst),
+        .clk(tx_usrclk), .rst(tx_rst), .drop(tx_drop),
         .s_axis_tdata(s_axis_tx_tdata), .s_axis_tkeep(s_axis_tx_tkeep), .s_axis_tlast(s_axis_tx_tlast),
         .s_axis_tvalid(s_axis_tx_tvalid), .s_axis_tready(s_axis_tx_tready),
         .txdata0(tx0), .txdata1(tx1), .txdata2(tx2), .txdata3(tx3),

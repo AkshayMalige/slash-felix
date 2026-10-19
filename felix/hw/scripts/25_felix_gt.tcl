@@ -1,6 +1,7 @@
-# GT quads in the static shell, one hierarchy gt_<bank> per entry of ::felix_gt_quads, and the
+# GT quads in the static shell, one hierarchy gt_<bank> per entry of ::felix_gt_quads, the
 # reference clock meter (felix_refclk_meter) that owns the input buffers of all 8 reference clock
-# pin pairs of the FireFly quads (REFCLK0 = Si5395, REFCLK1 = Si570 via a Si53344 splitter).
+# pin pairs of the FireFly quads (REFCLK0 = Si5395, REFCLK1 = Si570 via a Si53344 splitter), and
+# felix_board_io, which drives the FireFly control lines in bank 703.
 # Each quad: gtwiz_versal (raw 64-bit, 25.78125 Gb/s) fed by its REFCLK1 buffer in the meter, user
 # clock buffers, felix_gt_quad_if (lane adapters + host registers) and two NoC stream cells to the
 # kernel region. The wizard's register port (256 KB, too big for the BAR4 window) sits behind
@@ -12,12 +13,13 @@ if {![info exists ::felix_gt_quads]} { set ::felix_gt_quads {} }
 # NoC bandwidth per stream in MB/s: the line rate is 12890, so leave some margin
 if {![info exists ::felix_gt_stream_mbps]} { set ::felix_gt_stream_mbps 14000 }
 
-# bank -> GT quad site, meter input of its REFCLK1, static NoC sites next to column X0
+# bank -> GT quad site, meter input of its REFCLK1, static NoC sites next to the quad (clock
+# regions X1Y4, X1Y5 and X1Y7; felix_pblock.xdc keeps X1Y7 out of the kernel region)
 set ::felix_gt_quad_table {
     106 {GTYP_QUAD_X0Y6  1 NOC_NMU512_X0Y6 NOC_NSU512_X0Y6}
     110 {GTYP_QUAD_X0Y10 3 NOC_NMU512_X0Y7 NOC_NSU512_X0Y7}
-    111 {GTYP_QUAD_X0Y11 5 NOC_NMU512_X0Y8 NOC_NSU512_X0Y8}
-    112 {GTYP_QUAD_X0Y12 7 NOC_NMU512_X0Y5 NOC_NSU512_X0Y5}
+    111 {GTYP_QUAD_X0Y11 5 NOC_NMU512_X0Y11 NOC_NSU512_X0Y11}
+    112 {GTYP_QUAD_X0Y12 7 NOC_NMU512_X0Y12 NOC_NSU512_X0Y12}
 }
 # meter input i: quad, REFCLK0/1, P and N pins (schematic pp.3-4)
 set ::felix_refclk_pins {
@@ -29,10 +31,21 @@ set ::felix_refclk_pins {
 # which comes from these FPGA pins through a level shifter: left floating (bank unused), the
 # splitters pass noise. si53344_sel = 0 selects the Si570. Using the bank pulls its unused pins
 # low, so the I2C mux reset (BP40) is driven high (i2c_mux_rst_b = 1), as in the FELIX firmware.
+# Bank 703 (1.5 V, schematic pp.31, 46-49): reset, I2C select, present and interrupt of the
+# FireFly 1/2 TX and RX modules (bit order FF1 TX, FF1 RX, FF2 TX, FF2 RX), driven as in the FELIX
+# firmware. FireFly 6 and the two I/O expander resets share the bank and would be pulled low, so
+# they get their FELIX levels too.
 set ::felix_board_pins {
     {si53344_sel[0]    BK39}
     {si53344_sel[1]    BJ39}
     {i2c_mux_rst_b     BP40}
+    {ff_rst_b[0]       BP18} {ff_sel_b[0]   BU18} {ff_prsnt_b[0] BR18} {ff_intr_b[0] BU19}
+    {ff_rst_b[1]       BN20} {ff_sel_b[1]   BT20} {ff_prsnt_b[1] BR19} {ff_intr_b[1] BP21}
+    {ff_rst_b[2]       BL19} {ff_sel_b[2]   BJ20} {ff_prsnt_b[2] BL20} {ff_intr_b[2] BK19}
+    {ff_rst_b[3]       BJ19} {ff_sel_b[3]   BG20} {ff_prsnt_b[3] BK18} {ff_intr_b[3] BH19}
+    {ff6_rst_b         BE19} {ff6_sel_b     BF19} {ff6_prsnt_b   BE20} {ff6_intr_b   BG19}
+    {ioexp_rst_b[0]    BV19} {ioexp_intr_b[0] BV18}
+    {ioexp_rst_b[1]    BT19} {ioexp_intr_b[1] BV20}
 }
 
 proc felix_gt_quad {bank k nmu nsu} {
@@ -147,9 +160,9 @@ proc felix_gt_axi_port {k name} {
 
 # Fixed host addresses, assigned before the automatic pass so that pass does not move the clock
 # wizards and the build-ID register (vrtd reads it at PF2 BAR4 + 0x20000).
-proc felix_gt_assign {seg offset} {
+proc felix_gt_assign {seg offset {range 64K}} {
     foreach space {CPM_PCIE_NOC_0 CPM_PCIE_NOC_1} {
-        assign_bd_address -offset [format 0x%X $offset] -range 64K \
+        assign_bd_address -offset [format 0x%X $offset] -range $range \
             -target_address_space [get_bd_addr_spaces static_region/aved/cips/$space] [get_bd_addr_segs $seg]
     }
 }
@@ -159,7 +172,7 @@ proc felix_gt_build {} {
     if {$nq == 0} { return }
     set sc [get_bd_cells static_region/clk_rst_shell/smartconnect_0]
     set base_mi [get_property CONFIG.NUM_MI $sc]
-    set_property CONFIG.NUM_MI [expr {$base_mi + $nq + 1}] $sc
+    set_property CONFIG.NUM_MI [expr {$base_mi + $nq + 2}] $sc
 
     current_bd_instance /static_region/clk_rst_shell
     create_bd_pin -dir O -type rst gt_aresetn
@@ -179,7 +192,25 @@ proc felix_gt_build {} {
     connect_bd_intf_net [get_bd_intf_pins static_region/M_AXI_REFCLK] [get_bd_intf_pins refclk_meter/s_axi]
     connect_bd_net [get_bd_pins static_region/pl0_ref_clk] [get_bd_pins refclk_meter/s_axi_aclk]
     connect_bd_net [get_bd_pins static_region/gt_aresetn] [get_bd_pins refclk_meter/s_axi_aresetn]
-    felix_gt_assign refclk_meter/s_axi/reg0 0x20400070000
+    felix_gt_assign refclk_meter/s_axi/reg0 0x20400070000 32K
+
+    # board lines: same 64 KB slot as the meter, upper half
+    set b [create_bd_cell -type module -reference felix_board_io board_io]
+    foreach {port dir width} {ff_rst_b O 4 ff_sel_b O 4 ff_prsnt_b I 4 ff_intr_b I 4
+                              ff6_rst_b O 1 ff6_sel_b O 1 ff6_prsnt_b I 1 ff6_intr_b I 1
+                              ioexp_rst_b O 2 ioexp_intr_b I 2} {
+        if {$width > 1} {
+            create_bd_port -dir $dir -from [expr {$width - 1}] -to 0 $port
+        } else {
+            create_bd_port -dir $dir $port
+        }
+        connect_bd_net [get_bd_ports $port] [get_bd_pins board_io/$port]
+    }
+    felix_gt_axi_port [expr {$base_mi + $nq + 1}] M_AXI_BOARD
+    connect_bd_intf_net [get_bd_intf_pins static_region/M_AXI_BOARD] [get_bd_intf_pins board_io/s_axi]
+    connect_bd_net [get_bd_pins static_region/pl0_ref_clk] [get_bd_pins board_io/s_axi_aclk]
+    connect_bd_net [get_bd_pins static_region/gt_aresetn] [get_bd_pins board_io/s_axi_aresetn]
+    felix_gt_assign board_io/s_axi/reg0 0x20400078000 32K
 
     create_bd_port -dir O -from 1 -to 0 si53344_sel
     create_bd_port -dir O i2c_mux_rst_b
@@ -211,7 +242,7 @@ proc felix_gt_build {} {
         incr k
     }
     felix_gt_write_xdc
-    puts "FELIX_GT: [llength $::felix_gt_quads] quad(s): $::felix_gt_quads, refclk meter at 0x20400070000"
+    puts "FELIX_GT: [llength $::felix_gt_quads] quad(s): $::felix_gt_quads, refclk meter at 0x20400070000, board lines at 0x20400078000"
 }
 
 proc felix_gt_write_xdc {} {
@@ -254,10 +285,12 @@ proc felix_gt_check_one {name slave want} {
     }
 }
 
-# Quad k at 0x204_0003_0000 + k * 64 KB (PF2 BAR4 + 0x30000 + k * 0x10000), meter at BAR4 + 0x70000.
+# Quad k at 0x204_0003_0000 + k * 64 KB (PF2 BAR4 + 0x30000 + k * 0x10000), meter at BAR4 + 0x70000,
+# board lines at BAR4 + 0x78000.
 proc felix_gt_check_addresses {} {
     if {[llength $::felix_gt_quads] == 0} { return }
     felix_gt_check_one refclk_meter [get_bd_addr_segs refclk_meter/s_axi/reg0] 0x20400070000
+    felix_gt_check_one board_io [get_bd_addr_segs board_io/s_axi/reg0] 0x20400078000
     set k 0
     foreach bank $::felix_gt_quads {
         felix_gt_check_one gt_$bank [get_bd_addr_segs gt_$bank/quad_if/s_axi/reg0] [expr {0x20400030000 + $k * 0x10000}]

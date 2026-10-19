@@ -148,13 +148,14 @@ module tb_felix_gt_quad_if;
 
     // Source: beat k carries, for lane L, words 2k and 2k+1 tagged with the lane number.
     int sent = 0;
+    int extra = 0;  // beats offered after the run, while the adapters are held
     function automatic logic [63:0] word(int lane, longint idx);
         return {8'hA0 + 8'(lane), 56'(idx)};
     endfunction
     always @(posedge gtclk) begin
         if (tx_tvalid && tx_tready) sent <= sent + 1;
         if (!(tx_tvalid && !tx_tready)) begin
-            if (sent + (tx_tvalid && tx_tready) < NBEATS && ($urandom % 100) < 70) begin
+            if (sent + (tx_tvalid && tx_tready) < NBEATS + extra && ($urandom % 100) < 70) begin
                 automatic int k = sent + (tx_tvalid && tx_tready);
                 for (int l = 0; l < 4; l++)
                     tx_tdata[128*l +: 128] <= {word(l, 2*k + 1), word(l, 2*k)};
@@ -246,7 +247,11 @@ module tb_felix_gt_quad_if;
 
         axi_write(16'h04, 32'h100);
         repeat (20) @(posedge gtclk);
-        check(tx_tready == 0, "TX adapter held in reset by CTRL[8]");
+        check(tx_tready == 1, "held TX adapter takes beats (and drops them) instead of refusing them");
+        extra = 64;
+        wait (sent == NBEATS + 64);
+        repeat (20) @(posedge gtclk);
+        axi_read(16'h2C, d);  check(d == 0, $sformatf("beats taken while held reached the lanes: TX_BEATS %0d", d));
         axi_write(16'h04, 32'h0);
 
         if (errors == 0) $display("TB_RESULT: PASS");
