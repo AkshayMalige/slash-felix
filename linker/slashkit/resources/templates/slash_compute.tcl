@@ -716,9 +716,9 @@ update_compile_order -fileset sources_1
   [get_bd_pins axi_noc_0/aclk0] \
   [get_bd_pins c_shift_ram_0/CLK]
 
-# === GT streams of the shell (FELIX): RX gt_axis_noc_s_<k>, TX gt_axis_noc_<k> ===
-# Settings must stay textually identical to felix/hw/scripts/20_slash_base.tcl: these cells join
-# the shell's locked NoC paths only if the text matches.
+{# GT streams of the shell (FELIX): RX gt_axis_noc_s_<k>, TX gt_axis_noc_<k>. Settings must stay
+   textually identical to felix/hw/scripts/20_slash_base.tcl: these cells join the shell's locked
+   NoC paths only if the text matches. #}
 {% for k in range(gt_streams|default(0)) %}
 set gt_axis_noc_s_{{ k }} [ create_bd_cell -type ip -vlnv xilinx.com:ip:axis_noc:1.0 gt_axis_noc_s_{{ k }} ]
 set_property -dict [list CONFIG.NUM_NSI {1} CONFIG.NUM_SI {0}] $gt_axis_noc_s_{{ k }}
@@ -735,7 +735,6 @@ connect_bd_net [get_bd_pins user_clk] [get_bd_pins gt_axis_noc_s_{{ k }}/aclk0] 
 {% for p in gt_rx_tready_tie_pins|default([]) %}
 connect_bd_net [get_bd_pins xlconstant_0/dout] [get_bd_pins {{ p }}]
 {% endfor %}
-
 # === Instantiate kernel IPs ===
 {% for name, inst in instances.items() %}
 set {{ name }} [ create_bd_cell -type ip -vlnv {{ inst.kernel.vlnv }} {{ name }} ]

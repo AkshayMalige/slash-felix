@@ -14,11 +14,13 @@ it checks that the card runs a SLASH shell, that the vbin was linked against exa
 import argparse
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
+from collections import namedtuple
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -42,6 +44,14 @@ VBIN_SRC = {
 # a quad as after boot: streams held, no loopback, PRBS and polarity off (gt_link status line)
 HELD = "CTRL 0x100 LOOPBACK 0x000 TX_PRBS 0x0000 RX_PRBS 0x0000 POLARITY 0x00"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# a program's verdict lines (DDR_CAPACITY: PASS, Test passed!, 13 passed, 0 failed, 16 of 16 lanes ...)
+VERDICT = re.compile(r"^\s*([A-Z][A-Z0-9_]{2,}: |Test (passed|failed)|.*\b\d+ passed, \d+ failed|\d+ of \d+ lanes )")
+# lines that may explain a failure
+TROUBLE = re.compile(r"\bFAIL|NO SIGNAL|locked NO|error words:.*\b[1-9]|\bError\b|ERROR|Traceback|[Tt]imed? ?out|"
+                     r"denied|not found|[Aa]bort|terminate called")
+MEMORY_LINES = re.compile(r"^\s*(Kernel clock \(hw\)|QDMA (host->card|card->host) peak|DDR (write|read)\s+\()")
+
+Result = namedtuple("Result", "key result secs log start failed")
 
 
 def paint(word):
@@ -49,6 +59,68 @@ def paint(word):
         return word
     c = {"PASS": "32", "FAIL": "31", "INFO": "33", "SKIP": "33"}.get(word.split()[0], "1")
     return "\x1b[%sm%s\x1b[0m" % (c, word)
+
+
+def bold(text):
+    return "\x1b[1m%s\x1b[0m" % text if sys.stdout.isatty() else text
+
+
+def term_width():
+    return max(60, min(110, shutil.get_terminal_size((100, 24)).columns))
+
+
+def rule():
+    return ("─" if (sys.stdout.encoding or "").lower().startswith("utf") else "-") * term_width()
+
+
+def dots(label, width=56):
+    return label + " " + "." * (width - len(label) - 1) if len(label) < width - 2 else label
+
+
+def screen_note(note):
+    note = re.sub(r"^exit 0(; |$)", "", note)
+    return re.sub(r"vrtd: (\d+) load\(s\) completed, 0 failed",
+                  lambda m: "image loaded" if m.group(1) == "1" else m.group(1) + " images loaded", note)
+
+
+def key_lines(text, ok, show=None, most=14):
+    """What the screen shows of a program's output: its verdict and the lines matching show; after a
+    failure also the lines that look like the reason (or its last lines)."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and "] [DEBUG]" not in ln]
+    v = [i for i, ln in enumerate(lines) if VERDICT.search(ln) or (show and show.search(ln))]
+    t = [] if ok else [i for i, ln in enumerate(lines) if i not in v and TROUBLE.search(ln)]
+    if not ok and not v and not t:
+        t = list(range(max(0, len(lines) - 8), len(lines)))
+    cut = max(0, len(t) - max(most - len(v), 4))
+    out = [lines[i] for i in sorted(v + t[:len(t) - cut])]
+    return out + (["... %d more such lines in the log" % cut] if cut else [])
+
+
+class Ticker:
+    """The running step on one screen line: label, seconds, the program's last line (terminal only)."""
+
+    def __init__(self, label):
+        self.label, self.t0, self.last = label, time.time(), ""
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self._loop, daemon=True) if sys.stdout.isatty() else None
+        if self.thread:
+            self.thread.start()
+
+    def _loop(self):
+        while True:
+            line = "  %s running %3.0f s  %s" % (dots(self.label), time.time() - self.t0, self.last)
+            sys.stdout.write("\r" + line[:term_width() - 1] + "\x1b[K")
+            sys.stdout.flush()
+            if self.done.wait(1):
+                return
+
+    def stop(self):
+        if self.thread:
+            self.done.set()
+            self.thread.join()
+            sys.stdout.write("\r\x1b[K")
+            sys.stdout.flush()
+        return time.time() - self.t0
 
 
 class ShellId:
@@ -160,7 +232,7 @@ class Runner:
         self.log_root = default_logs(args)
         self.run_dir = None
         self.seq = 0
-        self.results = []          # (test, result, seconds, log file)
+        self.results = []          # Result per test run this session
         self.gt_seconds = args.seconds
         self.card = None
         self.log = None
@@ -209,11 +281,14 @@ class Runner:
         self.log.write(text)
         self.log.flush()
 
-    def record(self, label, result, note=""):
-        """result: PASS, FAIL, INFO (never fails the test) or SKIP"""
+    def record(self, label, result, note="", secs=None, lines=()):
+        """result: PASS, FAIL, INFO (never fails the test) or SKIP; lines: shown under it"""
         self.steps.append((label, result, note))
         self.write("### %s: %s %s\n" % (label, result, note))
-        print("  %-58s %s %s" % (label, paint(result), note))
+        print("  %s %s %s  %s" % (dots(label), paint("%-4s" % result),
+                                  "%4.0f s" % secs if secs is not None else "      ", screen_note(note)))
+        for ln in lines:
+            print("        " + ln)
 
     # ---- running programs ----
 
@@ -233,10 +308,11 @@ class Runner:
         self.write(out)
         return p.returncode, out
 
-    def step(self, label, argv, vbin=None, check=None, info=False, sigint_after=None):
-        """Runs one program with its output on the screen and in the log. PASS = exit code 0, or what
-        check(output, exit code) says. vbin: the image the program loads (checked first, streams held
-        before the load). sigint_after: Ctrl-C to the program after that many seconds."""
+    def step(self, label, argv, vbin=None, check=None, info=False, sigint_after=None, show=None):
+        """Runs one program; its output goes to the log, the screen shows the step's result and the
+        key lines (all of it with -v). PASS = exit code 0, or what check(output, exit code) says.
+        vbin: the image the program loads (checked first, streams held before the load).
+        sigint_after: Ctrl-C to the program after that many seconds. show: more lines for the screen."""
         if self.stop:
             return self.record(label, "SKIP", "interrupted")
         exe = Path(argv[1] if argv[0] == sys.executable else argv[0])
@@ -248,12 +324,16 @@ class Runner:
                 return self.record(label, "FAIL", pr[1])
             if not self.ensure_held():
                 return self.record(label, "FAIL", "GT quads not readable or not held after gt_link off (see log)")
-        print("--- %s" % label)
+        verbose = self.args.verbose
+        if verbose:
+            print("--- %s" % label)
         self.write("\n### %s\n### %s\n" % (label, " ".join(map(str, argv))))
         since = time.strftime("%Y-%m-%d %H:%M:%S")
+        t0 = time.time()
         out, fired = [], []
         p = subprocess.Popen(["stdbuf", "-oL", "-eL"] + [str(a) for a in argv], stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True, errors="replace", bufsize=1, cwd=self.run_dir)
+        ticker = None if verbose else Ticker(label)
 
         def interrupt():
             fired.append(True)
@@ -266,12 +346,16 @@ class Runner:
             line = ANSI.sub("", line)
             out.append(line)
             self.log.write(line)
-            if self.args.verbose or "] [DEBUG]" not in line:
+            debug = "] [DEBUG]" in line
+            if verbose > 1 or (verbose and not debug):
                 sys.stdout.write(line)
                 sys.stdout.flush()
+            elif ticker and not debug and line.strip():
+                ticker.last = line.strip()
         rc = p.wait()
         if timer:
             timer.cancel()
+        secs = ticker.stop() if ticker else time.time() - t0
         text = "".join(out)
         if self.stop:
             ok, note = False, "interrupted (exit %d)" % rc
@@ -290,7 +374,8 @@ class Runner:
             if loads:
                 note += "; vrtd: %d load(s) completed, %d failed" % (good, len(loads) - good)
                 ok = ok and good == len(loads)
-        return self.record(label, "INFO" if info else ("PASS" if ok else "FAIL"), note)
+        lines = () if verbose else key_lines(text, ok or info, show)
+        return self.record(label, "INFO" if info else ("PASS" if ok else "FAIL"), note, secs, lines)
 
     def quads_held(self):
         """(number of quads, number in the boot state) from gt_link status; (0, 0) without quads."""
@@ -343,14 +428,15 @@ class Runner:
                 time.strftime("%Y-%m-%d %H:%M:%S"), self.bdf, self.card or "not readable", REPO, git or "?",
                 self.args.vbins or "felix/examples/*/build"))
 
-    def run_test(self, test):
+    def run_test(self, test, i=1, n=1):
         self.card = read_card(self.bdf)
         self.open_run_dir()
         self.seq += 1
         name = "%02d_%s.log" % (self.seq, test.key)
         self.steps = []
-        t0 = time.time()
-        print("\n=== %s: %s" % (test.key, test.desc))
+        t0, start = time.time(), time.strftime("%H:%M:%S")
+        print("\n" + rule())
+        print(bold(" [%d/%d] %s" % (i, n, test.key)) + "   " + test.desc)
         with open(self.run_dir / name, "w") as self.log:
             self.write("%s  %s: %s\ncard %s, shell %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), test.key,
                                                             test.desc, self.bdf, self.card or "not readable"))
@@ -366,34 +452,77 @@ class Runner:
             secs = time.time() - t0
             self.write("\n%s: %s (%.0f s)\n" % (test.key, result, secs))
         self.log = None
-        self.results.append((test.key, result, secs, name))
+        failed = [label.split(":")[0] for label, r, _ in self.steps if r == "FAIL"]
+        res = Result(test.key, result, secs, name, start, failed)
+        self.results.append(res)
         with open(self.run_dir / "summary.txt", "a") as f:
-            f.write("  %s  %-12s %-4s %5.0f s  %s\n" % (time.strftime("%H:%M:%S"), test.key, result, secs, name))
-        print("=== %s: %s (%.0f s) -> %s" % (test.key, paint(result), secs, self.run_dir / name))
-        return result
+            f.write("  %s  %-12s %-4s %5.0f s  %s%s\n" % (start, test.key, result, secs, name,
+                                                         "  failed: " + "; ".join(failed) if failed else ""))
+        print(" %s %s (%.0f s)   log %s" % (bold(test.key + ":"), paint(result), secs, self.run_dir / name))
+        return res
 
     def run(self, tests, gt_seconds=None):
         # Ctrl-C reaches the running test program (its own handler holds the GT streams); here it
         # only ends the set
         self.stop = False
         self.gt_seconds = gt_seconds or self.args.seconds
+        done = []
         prev = signal.signal(signal.SIGINT, self._on_sigint)
         try:
-            for t in tests:
+            for i, t in enumerate(tests, 1):
                 if self.stop:
                     break
-                self.run_test(t)
+                done.append(self.run_test(t, i, len(tests)))
         finally:
             signal.signal(signal.SIGINT, prev)
             self.gt_seconds = self.args.seconds
-        self.summary()
+        self.summary(done, len(tests))
 
-    def summary(self):
-        if not self.results:
+    def summary(self, done, planned):
+        if not done:
             return
-        print("\nResults this session (%s):" % self.run_dir)
-        for key, result, secs, name in self.results:
-            print("  %-12s %s %5.0f s  %s" % (key, paint("%-4s" % result), secs, name))
+        print("\n" + rule())
+        print(bold(" Results") + "   logs %s" % self.run_dir)
+        for res in done:
+            print("   %-13s %s %5.0f s   %s" % (res.key, paint("%-4s" % res.result), res.secs,
+                                             "failed: " + ", ".join(res.failed) if res.failed else ""))
+        npass = sum(res.result == "PASS" for res in done)
+        print(" %d of %d tests passed%s" % (npass, len(done), ", %d not run (Ctrl-C)" % (planned - len(done))
+                                             if planned > len(done) else ""))
+
+    def pause(self):
+        """After a set, before the menu: True to leave the menu."""
+        while True:
+            try:
+                w = input("\nEnter = back to the menu, l [test] = read a log, x = exit: ").split()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return False
+            if w and w[0].lower() == "l":
+                self.view_log(w[1:])
+                continue
+            return bool(w) and w[0].lower() in ("x", "q", "quit", "exit")
+
+    def view_log(self, words):
+        """The latest log of a test (or of the last test) this session, without the VRT debug lines."""
+        done = self.results
+        if words:
+            tests, _ = resolve(words)
+            done = [res for res in done if res.key in [t.key for t in tests or []]]
+        if not done:
+            print("no such log this session; all logs: %s" % self.log_root)
+            return
+        path = self.run_dir / done[-1].log
+        with open(path, errors="replace") as f:
+            text = "".join(ln for ln in f if self.args.verbose > 1 or "] [DEBUG]" not in ln)
+        text = "%s   (VRT debug lines left out; q = back)\n\n%s" % (path, text)
+        try:
+            if sys.stdout.isatty() and shutil.which("less"):
+                subprocess.run(["less", "-R"], input=text, text=True, errors="replace")
+            else:
+                print(text)
+        except KeyboardInterrupt:
+            print()
 
 
 # ---- the tests ----
@@ -434,7 +563,7 @@ def t_clocks(r):
 
 
 def t_memory(r):
-    r.kernel("04_test_felix", "04_test_felix", "test_felix_hw.vbin")
+    r.kernel("04_test_felix", "04_test_felix", "test_felix_hw.vbin", show=MEMORY_LINES)
 
 
 def t_gt(r):
@@ -539,13 +668,16 @@ def show(r, header=True):
         print("\nFELIX card tests   card %s   shell %s   vrtd %s   link %s x%s" % (
             r.bdf, r.card or "NOT READABLE (not in SLASH mode?)", vrtd_state(), speed or "?", width or "?"))
         print("logs: %s" % (r.run_dir or r.log_root / "<date_time>"))
+    last = {res.key: res for res in r.results}
     group = None
     for i, t in enumerate(TESTS, 1):
         if t.group != group:
             group = t.group
             print("  %s" % group)
         pr = r.test_problem(t)
-        print("   %2d  %-13s %-60s %s" % (i, t.key, t.desc, "" if pr is None else "[%s]" % pr))
+        res = last.get(t.key)
+        last_run = "%s %s" % (paint("%-4s" % res.result), res.start[:5]) if res else " " * 10
+        print("   %2d  %-13s %s  %s%s" % (i, t.key, last_run, t.desc, "" if pr is None else "   [%s]" % pr))
     print("  Sets")
     for name, (letter, keys, secs) in SETS.items():
         print("    %s  %-12s %s%s" % (letter, name, " ".join(keys), " (08 long run %d s)" % secs if secs else ""))
@@ -553,19 +685,28 @@ def show(r, header=True):
 
 def menu(r):
     while True:
+        if sys.stdout.isatty():
+            # scroll the last run up into the terminal's history, then the menu on a clean screen
+            sys.stdout.write("\n" * shutil.get_terminal_size((100, 24)).lines + "\x1b[H")
         show(r)
         try:
-            choice = input("\nTests or a set (e.g. 3 or 3 8 or a), x to exit: ").split()
+            choice = input("\nTests or a set (e.g. 3, 3 8, a), l [test] = read a log, x = exit: ").split()
         except (EOFError, KeyboardInterrupt):
             print()
             break
         if not choice:
             continue
-        if choice[0].lower() in ("x", "q", "quit", "exit"):
+        w = choice[0].lower()
+        if w in ("x", "q", "quit", "exit"):
             break
+        if w == "l":
+            r.view_log(choice[1:])
+            continue
         tests, secs = resolve(choice)
         if tests:
             r.run(tests, secs)
+        if r.pause():
+            break
 
 
 def main():
@@ -578,7 +719,8 @@ def main():
                                   "the repo if that exists, else ~/felix_test_logs)")
     p.add_argument("--seconds", type=float, default=40, help="long run of 08_gt_loopback (default 40)")
     p.add_argument("--any-shell", action="store_true", help="load vbins without a matching shell ID")
-    p.add_argument("-v", "--verbose", action="store_true", help="show VRT debug lines on the screen too")
+    p.add_argument("-v", "--verbose", action="count", default=0,
+                   help="the programs' whole output on the screen; -vv also the VRT debug lines")
     args = p.parse_args()
     r = Runner(args)
     if args.cmd == "list":
@@ -589,7 +731,7 @@ def main():
         if not tests:
             p.error("run needs tests or sets: " + ", ".join([t.key for t in TESTS] + list(SETS)))
         r.run(tests, secs)
-        return 0 if r.results and all(res == "PASS" for _, res, _, _ in r.results) else 1
+        return 0 if r.results and all(res.result == "PASS" for res in r.results) else 1
     menu(r)
     return 0
 

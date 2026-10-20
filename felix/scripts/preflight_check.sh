@@ -43,7 +43,7 @@ fi
 echo
 echo "=== 1b. FELIX shell staged for the linker ==============================="
 SSC=linker/slashkit/resources/static_shell_compute
-for f in static_shell_slash.dcp slash_base/slash_base.bd board.json; do
+for f in static_shell_slash.dcp slash_base/slash_base.bd board.json shell_build_id; do
     [ -f "$SSC/$f" ] && ok "$SSC/$f" || bad "$SSC/$f missing - run felix/scripts/stage_artifacts.sh"
 done
 IMPL_DCP=felix/hw/proj/felix_slash.runs/impl_1/static_shell_slash.dcp
@@ -133,6 +133,20 @@ if systemctl is-enabled --quiet vrtd.socket 2>/dev/null; then ok "vrtd.socket en
 else bad "vrtd.socket DISABLED - it will not come back after reboot: sudo systemctl enable --now vrtd.socket"; fi
 id -nG | tr ' ' '\n' | grep -qx vrtadmin && ok "you are in group 'vrtadmin'" \
     || bad "not in 'vrtadmin' - vrtd will refuse design-write (usermod -aG vrtadmin \$USER; newgrp vrtadmin)"
+card_id() { v80-smi debug bar-poke -d "$BDF" -b 4 -r -x "$1" 2>/dev/null | awk 'NF{l=$1} END{print l}'; }
+if [ ! -f "$SSC/shell_build_id" ]; then
+    skip "no $SSC/shell_build_id: card shell not compared"
+else
+    read -r slo shi < "$SSC/shell_build_id"
+    clo=$(card_id 0x20000); chi=$(card_id 0x20008)
+    if [[ ! $clo =~ ^0x[0-9a-fA-F]{1,8}$ || ! $chi =~ ^0x[0-9a-fA-F]{1,8}$ ]]; then
+        skip "card build ID not readable (card not in SLASH mode?)"
+    elif (( clo == slo && chi == shi )); then
+        ok "card runs the staged shell (build ID $clo $chi): vbins linked here load"
+    else
+        warn "card runs build ID $clo $chi, the staged shell is $slo $shi: vbins linked here load only after the card boots this build"
+    fi
+fi
 
 echo
 echo "=========================================================================="

@@ -14,7 +14,10 @@ proc felix_build_id {repo} {
     set v  [expr "0x[string range $sha 0 14]"]
     set lo [expr {$v & 0xFFFFFFFF}]
     set hi [expr {($v >> 32) & 0x0FFFFFFF}]
-    if {[catch {exec git -C $repo diff --quiet}]} { set hi [expr {$hi | 0x80000000}] }
+    # uncommitted: changed, staged or new files (the build takes every rtl/*.v it finds)
+    if {[catch {exec git -C $repo status --porcelain --ignore-submodules=dirty} st] || $st ne ""} {
+        set hi [expr {$hi | 0x80000000}]
+    }
     set hi [expr {$hi | 0x10000000}]
     return [list [format 0x%08x $lo] [format 0x%08x $hi]]
 }
