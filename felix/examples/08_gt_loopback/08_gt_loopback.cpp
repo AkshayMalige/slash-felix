@@ -6,6 +6,8 @@
 //   3. kernel path: gt_prbs_gen_k -> NoC -> quad k TX -> GT -> loopback -> RX -> NoC -> gt_prbs_check_k,
 //      once with one flipped bit per quad (3 error bits each), then a long run that must be error
 //      free (default 40 s, about 1e12 bits per lane)
+// --park: only loads the image, holds every quad and starts the generators, then ends with them
+// running against the held TX adapters (data on the TX side only). The next kernel load must work.
 #include "../../tools/gt_link/gt_regs.hpp"
 
 #include <vrt/device.hpp>
@@ -38,7 +40,9 @@ struct Pair {
 struct StopStreams {
     std::vector<Quad> quads;
     std::vector<Pair> *pairs;
+    bool active = true;
     ~StopStreams() {
+        if (!active) return;
         try {
             bool draining = false;
             for (auto &p : *pairs) {
@@ -124,14 +128,16 @@ void print_result(uint32_t bank, const CheckResult &r) {
 
 int main(int argc, char *argv[]) {
     double seconds = 40.0;
-    bool external = false;
+    bool external = false, park = false;
     std::vector<std::string> pos;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--external")) external = true;
+        else if (!std::strcmp(argv[i], "--park")) park = true;
         else pos.push_back(argv[i]);
     }
     if (pos.size() < 2) {
-        std::fprintf(stderr, "Usage: %s <BDF> <vbin> [seconds of the long run, default 40] [--external]\n", argv[0]);
+        std::fprintf(stderr, "Usage: %s <BDF> <vbin> [seconds of the long run, default 40] [--external | --park]\n",
+                     argv[0]);
         return 2;
     }
     if (pos.size() > 2) seconds = std::atof(pos[2].c_str());
@@ -160,10 +166,34 @@ int main(int argc, char *argv[]) {
             }
         }
         std::printf("Mode: %s; %zu quad(s) in the shell, %zu generator/checker pair(s) in the image\n",
-                    external ? "external (cables)" : "in-chip near-end PMA loopback", quads.size(), pairs.size());
+                    park       ? "park (generators only, quads held)"
+                    : external ? "external (cables)"
+                               : "in-chip near-end PMA loopback",
+                    quads.size(), pairs.size());
         if (!check(!quads.empty() && pairs.size() == quads.size(), "one kernel pair per GT quad")) {
             std::printf("GT_LOOPBACK: FAIL\n");
             return 1;
+        }
+        if (park) {
+            stop.active = false;
+            std::vector<uint32_t> tx0;
+            for (const auto &q : quads) {
+                q.write(CTRL, CTRL_HOLD);
+                tx0.push_back(q.read(TX_BEATS));
+            }
+            for (auto &p : pairs) {
+                p.gen->setArg("nbeats", uint64_t{1'000'000'000});
+                p.gen->setArg("inject_at", ~uint64_t{0});
+                p.gen->setArg("inject_lane", 0u);
+                p.gen->start();
+            }
+            sleep_ms(1000);
+            for (size_t i = 0; i < quads.size(); ++i)
+                std::printf("  quad %u: CTRL 0x%03x, TX beats taken by the shell %u, generator %s\n", quads[i].bank(),
+                            quads[i].read(CTRL), quads[i].read(TX_BEATS) - tx0[i],
+                            (pairs[i].gen->read(0x00) & 0x4) ? "idle" : "running");
+            std::printf("GT_LOOPBACK: PARKED (quads held, generators started; load another image next)\n");
+            return 0;
         }
 
         std::printf("1. Reference clock inputs, FireFly modules, GT quads\n");

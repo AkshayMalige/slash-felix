@@ -21,6 +21,13 @@ copy() {
 
 echo "=== linker inputs -> ${SSC#$REPO/} ==="
 copy static_shell_slash.dcp "$SSC" required
+if [ -f "${PROJ}/shell_build_id" ]; then
+    cp -f "${PROJ}/shell_build_id" "${SSC}/shell_build_id"
+    echo "  staged: shell_build_id ($(cat "${SSC}/shell_build_id"))"
+else
+    rm -f "${SSC:?}/shell_build_id"
+    echo "  (skip, absent): shell_build_id (vbins linked against this shell get no shell ID)"
+fi
 rm -rf "${SSC}/slash_base.tmp" && cp -a "$BD_SRC" "${SSC}/slash_base.tmp"
 cp -f "${SSC}/slash_base/__init__.py" "${SSC}/slash_base.tmp/__init__.py"
 rm -rf "${SSC}/slash_base" && mv "${SSC}/slash_base.tmp" "${SSC}/slash_base"

@@ -631,6 +631,9 @@ def main():
     p.add_argument("--bdf", default="0000:41:00.0", help="PCIe function of the card (default 0000:41:00.0)")
     p.add_argument("-i", "--interval", type=float, default=2.0, help="refresh period in seconds (default 2)")
     p.add_argument("--once", action="store_true", help="print one snapshot as text and exit")
+    p.add_argument("--check", action="store_true",
+                   help="like --once, then SENSORS: PASS or FAIL (exit 1): FAIL if a sensor has no data, is at "
+                        "its warning or critical level, or a voltage or temperature reads 0")
     p.add_argument("--csv", help="append every reading to this CSV file")
     p.add_argument("--web", action="store_true", help="serve a live web page with plots instead of the terminal view")
     p.add_argument("--port", type=int, default=8080, help="web page port (default 8080)")
@@ -645,6 +648,18 @@ def main():
     if args.web:
         serve(mon, args.host, args.port)
         return 0
+    if args.check:
+        rows = mon.lines()
+        for text, _ in rows:
+            print(text)
+        _, _, sensors = mon.last
+        bad = [t.split()[0] if t.startswith("  ") else t for t, sev in rows if sev in (-1, 1, 2)]
+        # all-zero readings are how a failed AMC I2C bus shows up
+        bad += [s["label"] for s in sensors if s["type"] in ("in", "temp") and s["value"] == 0]
+        if not sensors and not bad:
+            bad = ["no sensors"]
+        print("SENSORS: %s%s" % ("FAIL: " if bad else "PASS", ", ".join(bad)))
+        return 1 if bad else 0
     if args.once or not sys.stdout.isatty():
         for text, _ in mon.lines():
             print(text)
