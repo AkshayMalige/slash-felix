@@ -1,9 +1,9 @@
 // TX lane adapter: one 512-bit AXI-Stream beat -> 4 GT lanes x 64 bits over two tx_usrclk
 // cycles (low half of each lane first, same layout as the RX adapter). The GT needs a word
-// every clock, so when no beat is waiting it sends zeros and counts an underflow (counted only
+// every clock, so when no beat is waiting it sends idle words and counts an underflow (counted only
 // after the first beat, so the idle time before a kernel starts is not counted). It starts
 // sending only when PREFILL beats are buffered, and again after an underflow, so NoC delivery
-// jitter is absorbed by the FIFO instead of inserting zeros into the lanes. While the host holds
+// jitter is absorbed by the FIFO instead of inserting idle words into the lanes. While the host holds
 // the streams (drop) it takes every beat and drops it: refusing beats would leave the kernel's data
 // waiting in the NoC, and a kernel load fails while data waits there. While the GT is not ready
 // (rst without drop) beats wait.
@@ -34,6 +34,24 @@ module felix_gt_tx_adapter #(
     reg          started;
     reg          running;
     wire [$clog2(FIFO_DEPTH):0] rd_count;
+
+    // Idle words: PRBS-7 (x^7 + x^6 + 1), the same 64 bits on every lane, sent in reset, while held
+    // and on underflows. Over fibre a line of zeros left some receivers in a bad state until their
+    // next reset (2026-10-22). PRBS-31 checkers never lock on PRBS-7.
+    reg  [6:0]  idle_state = 7'h7F;
+    reg  [6:0]  idle_next;
+    reg  [63:0] idle_word;
+    integer     i;
+
+    always @(*) begin
+        idle_next = idle_state;
+        for (i = 0; i < 64; i = i + 1) begin
+            idle_word[i] = idle_next[6] ^ idle_next[5];
+            idle_next    = {idle_next[5:0], idle_word[i]};
+        end
+    end
+
+    always @(posedge clk) idle_state <= (idle_state == 7'd0) ? 7'h7F : idle_next;
 
     wire rd_en = !rst && !have_high && !empty && !rd_rst_busy && (running || rd_count >= PREFILL);
 
@@ -67,7 +85,7 @@ module felix_gt_tx_adapter #(
             running         <= 1'b0;
             beat_count      <= 32'd0;
             underflow_count <= 32'd0;
-            {txdata3, txdata2, txdata1, txdata0} <= 256'd0;
+            {txdata3, txdata2, txdata1, txdata0} <= {4{idle_word}};
         end else if (have_high) begin
             {txdata3, txdata2, txdata1, txdata0} <= high;
             have_high <= 1'b0;
@@ -80,7 +98,7 @@ module felix_gt_tx_adapter #(
             running    <= 1'b1;
             beat_count <= beat_count + 32'd1;
         end else begin
-            {txdata3, txdata2, txdata1, txdata0} <= 256'd0;
+            {txdata3, txdata2, txdata1, txdata0} <= {4{idle_word}};
             running <= 1'b0;
             if (started)
                 underflow_count <= underflow_count + 32'd1;

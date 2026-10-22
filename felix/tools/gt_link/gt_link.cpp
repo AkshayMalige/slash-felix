@@ -113,7 +113,7 @@ int cmd_prbs(const std::vector<Quad> &quads, bool external, double seconds) {
         for (uint32_t l = 0; l < 4; ++l) e0[i][l] = quads[i].prbs_err(l);
     std::printf("Counting errors for %.0f s ...\n", seconds);
     sleep_ms(int(seconds * 1000));
-    const double bits = seconds * 25.78125e9;
+    const double bits = seconds * 25.0e9;
     int good = 0, total = 0;
     for (size_t i = 0; i < quads.size(); ++i) {
         const uint32_t still = quads[i].locks();

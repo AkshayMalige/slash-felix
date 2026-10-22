@@ -26,7 +26,7 @@ using namespace felix_gt;
 
 namespace {
 
-constexpr double BEATS_PER_S = 25.78125e9 / 128;  // one 512-bit beat = 128 bits per lane
+constexpr double BEATS_PER_S = 25.0e9 / 128;  // one 512-bit beat = 128 bits per lane
 
 // The generator and checker kernels of one quad.
 struct Pair {
@@ -57,7 +57,10 @@ struct StopStreams {
             if (draining) sleep_ms(20);
             for (const auto &q : quads) q.write(CTRL, CTRL_HOLD);
             if (draining) sleep_ms(20);
-            for (const auto &q : quads) q.write(LOOPBACK, 0);
+            for (const auto &q : quads) {
+                q.write(LOOPBACK, 0);
+                q.write(POLARITY, 0);
+            }
         } catch (const std::exception &e) {
             std::fprintf(stderr, "08_gt_loopback: stopping the streams failed: %s\n", e.what());
         }
@@ -227,7 +230,7 @@ int main(int argc, char *argv[]) {
                         q.bank(), ref, txc, rxc, st);
             const std::string b = "quad " + std::to_string(q.bank()) + ": ";
             check(ref > 156.0 && ref < 156.5 && (st & 1) && done, b + "reference 156.25 MHz, power good, reset done");
-            check(txc > 402.0 && txc < 403.7 && rxc > 402.0 && rxc < 403.7, b + "user clocks 402.832 MHz");
+            check(txc > 389.8 && txc < 391.5 && rxc > 389.8 && rxc < 391.5, b + "user clocks 390.625 MHz");
         }
 
         std::printf("2. GT internal PRBS-31 on every lane (checkers inside the GT)\n");

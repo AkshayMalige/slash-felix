@@ -1,8 +1,8 @@
 // Testbench for felix_gt_quad_if: GT modelled as a 3-cycle loop from txdata to rxdata on one
-// 402.832 MHz clock. A source sends beats with per-lane word counters (with gaps, so the TX
-// adapter underflows), a sink with random back-pressure checks that every lane receives the
-// same words in order, and the AXI-Lite tasks check the registers and frequency counters. The
-// GT register port is a word memory with random ready delays and an error at 0x3FFFC.
+// 390.625 MHz clock. A source sends beats with per-lane word counters (with gaps, so the TX
+// adapter underflows and sends idle words), a sink with random back-pressure checks that every
+// lane receives the same words in order, and the AXI-Lite tasks check the registers and frequency
+// counters. The GT register port is a word memory with random ready delays and an error at 0x3FFFC.
 `timescale 1ps/1ps
 module tb_felix_gt_quad_if;
 
@@ -11,7 +11,7 @@ module tb_felix_gt_quad_if;
 
     logic aclk = 0, aresetn = 0, gtclk = 0, refdiv2 = 0;
     always #5000 aclk = ~aclk;
-    always #1241 gtclk = ~gtclk;
+    always #1280 gtclk = ~gtclk;
     always #6400 refdiv2 = ~refdiv2;
 
     logic [15:0] awaddr, araddr;
@@ -166,18 +166,19 @@ module tb_felix_gt_quad_if;
         end
     end
 
-    // Sink: random back-pressure; unpack each lane, skip zero (underflow) words, check order.
+    // Sink: random back-pressure; unpack each lane, skip idle words (the same on all lanes, never
+    // zero; data words differ per lane), check order.
     longint next_idx [4] = '{0, 0, 0, 0};
-    int zero_words = 0, got_words = 0;
+    int idle_words = 0, got_words = 0;
     always @(posedge gtclk) begin
         rx_tready <= ($urandom % 100) < 85;
         if (rx_tvalid && rx_tready) begin
             for (int h = 0; h < 2; h++) begin
                 logic [63:0] w [4];
                 for (int l = 0; l < 4; l++) w[l] = rx_tdata[128*l + 64*h +: 64];
-                if (w[0] == 64'd0) begin
-                    zero_words++;
-                    for (int l = 1; l < 4; l++) check(w[l] == 64'd0, "lanes not zero together");
+                if (w[0] == w[1] && w[1] == w[2] && w[2] == w[3]) begin
+                    idle_words++;
+                    check(w[0] != 64'd0, "idle word is zero");
                 end else begin
                     got_words++;
                     for (int l = 0; l < 4; l++) begin
@@ -213,10 +214,10 @@ module tb_felix_gt_quad_if;
         wait (sent == NBEATS);
         repeat (2000) @(posedge gtclk);
         check(got_words == 2 * NBEATS, $sformatf("got %0d words, sent %0d", got_words, 2 * NBEATS));
-        $display("words received %0d, underflow zero words %0d", got_words, zero_words);
+        $display("words received %0d, idle words %0d", got_words, idle_words);
 
         repeat (3 * GATE) @(posedge aclk);
-        axi_read(16'h24, d);  check(d == NBEATS + zero_words / 2 || d >= NBEATS, $sformatf("RX_BEATS %0d", d));
+        axi_read(16'h24, d);  check(d == NBEATS + idle_words / 2 || d >= NBEATS, $sformatf("RX_BEATS %0d", d));
         $display("RX_BEATS %0d", d);
         axi_read(16'h28, d);  check(d == 0, $sformatf("RX_DROPS %0d", d));
         axi_read(16'h2C, d);  check(d == NBEATS, $sformatf("TX_BEATS %0d", d));
@@ -225,8 +226,8 @@ module tb_felix_gt_quad_if;
         axi_read(16'h20, d);  check(d[2:0] == 3'b111 && d[7:4] == 4'b0101, $sformatf("STATUS %h", d));
         axi_read(16'h3C, d);  check(d == 110, $sformatf("BANK %0d", d));
         axi_read(16'h40, d);  $display("REFCLK %0d (expect ~781)", d); check(d >= 779 && d <= 783, "refclk div2 count");
-        axi_read(16'h44, d);  $display("TX_USRCLK %0d (expect ~4029)", d); check(d >= 4025 && d <= 4033, "tx usrclk count");
-        axi_read(16'h48, d);  check(d >= 4025 && d <= 4033, "rx usrclk count");
+        axi_read(16'h44, d);  $display("TX_USRCLK %0d (expect ~3906)", d); check(d >= 3902 && d <= 3910, "tx usrclk count");
+        axi_read(16'h48, d);  check(d >= 3902 && d <= 3910, "rx usrclk count");
         axi_read(16'h58, d);  check(d == 7, $sformatf("PRBS_ERR lane 2 = %0d", d));
         axi_read(16'h54, d);  check(d == 0, "PRBS_ERR lane 1");
 
@@ -248,6 +249,13 @@ module tb_felix_gt_quad_if;
         axi_write(16'h04, 32'h100);
         repeat (20) @(posedge gtclk);
         check(tx_tready == 1, "held TX adapter takes beats (and drops them) instead of refusing them");
+        begin
+            logic [63:0] t0, t1;
+            t0 = txd[0][63:0];
+            @(posedge gtclk); #1;
+            t1 = txd[0][63:0];
+            check(t0 != 64'd0 && t1 != 64'd0 && t0 != t1 && txd[3][63:0] == t1, "held lanes send changing idle words");
+        end
         extra = 64;
         wait (sent == NBEATS + 64);
         repeat (20) @(posedge gtclk);

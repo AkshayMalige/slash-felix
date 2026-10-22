@@ -2,7 +2,7 @@
 # reference clock meter (felix_refclk_meter) that owns the input buffers of all 8 reference clock
 # pin pairs of the FireFly quads (REFCLK0 = Si5395, REFCLK1 = Si570 via a Si53344 splitter), and
 # felix_board_io, which drives the FireFly control lines in bank 703.
-# Each quad: gtwiz_versal (raw 64-bit, 25.78125 Gb/s) fed by its REFCLK1 buffer in the meter, user
+# Each quad: gtwiz_versal (raw 64-bit, 25.0 Gb/s, DFE) fed by its REFCLK1 buffer in the meter, user
 # clock buffers, felix_gt_quad_if (lane adapters + host registers) and two NoC stream cells to the
 # kernel region. The wizard's register port (256 KB, too big for the BAR4 window) sits behind
 # felix_gt_quad_if, which reaches it one word at a time (GT_ADDR/GT_CMD). Stream k of the kernel region (slash/S_GT_INIS<k>, slash/M_GT_INIS<k>) is quad k.
@@ -10,7 +10,7 @@
 # after assign_bd_address.
 
 if {![info exists ::felix_gt_quads]} { set ::felix_gt_quads {} }
-# NoC bandwidth per stream in MB/s: the line rate is 12890, so leave some margin
+# NoC bandwidth per stream in MB/s: the line rate is 12500, so leave some margin
 if {![info exists ::felix_gt_stream_mbps]} { set ::felix_gt_stream_mbps 14000 }
 
 # bank -> GT quad site, meter input of its REFCLK1, static NoC sites next to the quad (clock
@@ -20,6 +20,12 @@ set ::felix_gt_quad_table {
     110 {GTYP_QUAD_X0Y10 3 NOC_NMU512_X0Y7 NOC_NSU512_X0Y7}
     111 {GTYP_QUAD_X0Y11 5 NOC_NMU512_X0Y11 NOC_NSU512_X0Y11}
     112 {GTYP_QUAD_X0Y12 7 NOC_NMU512_X0Y12 NOC_NSU512_X0Y12}
+}
+# TX driver per quad: pre-cursor, post-cursor, swing (TXPRECURSOR, TXPOSTCURSOR, TXDIFFCTRL on
+# all 4 lanes). Quads not listed keep the wizard defaults 0, 0, 25. Quad 106 (FireFly 1) needs
+# emphasis: with the defaults its fibre loop has errors (IBERT, 2026-10-21).
+set ::felix_gt_tx_drive {
+    106 {6 5 31}
 }
 # meter input i: quad, REFCLK0/1, P and N pins (schematic pp.3-4)
 set ::felix_refclk_pins {
@@ -65,9 +71,11 @@ proc felix_gt_quad {bank k nmu nsu} {
     # the clock is on the quad's REFCLK1 pin: refclk source R1 puts the LCPLL on GTREFCLK1
     # (HS0/HS1_LCPLL_IPS_REFCLK_SEL = 2), as in the FELIX firmware; with the default (R0) it
     # listens to GTREFCLK0 and never locks. The wizard port stays QUAD0_GTREFCLK0.
+    # DFE receiver: with LPM, lanes 110.0 and 110.2 had errors over fibre. 25.0 Gb/s: at 25.78125
+    # quad 106 keeps errors over fibre with any TX setting tried (IBERT, 2026-10-21).
     set g [create_bd_cell -type ip -vlnv xilinx.com:ip:gtwiz_versal:1.0 gtwiz_versal]
     set_property -dict [list \
-        CONFIG.INTF0_GT_SETTINGS(LR0_SETTINGS) {RX_LINE_RATE 25.78125 TX_LINE_RATE 25.78125 RX_USER_DATA_WIDTH 64 RX_INT_DATA_WIDTH 64 TX_USER_DATA_WIDTH 64 TX_INT_DATA_WIDTH 64 RX_EQ_MODE LPM RX_REFCLK_SOURCE R1 TX_REFCLK_SOURCE R1} \
+        CONFIG.INTF0_GT_SETTINGS(LR0_SETTINGS) {RX_LINE_RATE 25 TX_LINE_RATE 25 RX_USER_DATA_WIDTH 64 RX_INT_DATA_WIDTH 64 TX_USER_DATA_WIDTH 64 TX_INT_DATA_WIDTH 64 RX_EQ_MODE DFE RX_REFCLK_SOURCE R1 TX_REFCLK_SOURCE R1} \
         CONFIG.QUAD0_CH0_LOOPBACK_EN {true} CONFIG.QUAD0_CH1_LOOPBACK_EN {true} \
         CONFIG.QUAD0_CH2_LOOPBACK_EN {true} CONFIG.QUAD0_CH3_LOOPBACK_EN {true} \
         CONFIG.ENABLE_REG_INTERFACE {true} CONFIG.REG_CONF_INTF {AXI_LITE} \
@@ -140,6 +148,15 @@ proc felix_gt_quad {bank k nmu nsu} {
         connect_bd_net [get_bd_pins quad_if/rxpolarity$c]      [get_bd_pins gtwiz_versal/INTF0_RX${c}_ch_rxpolarity]
         connect_bd_net [get_bd_pins quad_if/rxprbslocked$c]    [get_bd_pins gtwiz_versal/INTF0_RX${c}_ch_rxprbslocked]
         connect_bd_net [get_bd_pins quad_if/rxprbserr$c]       [get_bd_pins gtwiz_versal/INTF0_RX${c}_ch_rxprbserr]
+    }
+    if {[dict exists $::felix_gt_tx_drive $bank]} {
+        foreach pin {txprecursor txpostcursor txdiffctrl} val [dict get $::felix_gt_tx_drive $bank] {
+            set cc [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 ${pin}_const]
+            set_property -dict [list CONFIG.CONST_WIDTH {5} CONFIG.CONST_VAL $val] $cc
+            set pins [list [get_bd_pins ${pin}_const/dout]]
+            for {set c 0} {$c < 4} {incr c} { lappend pins [get_bd_pins gtwiz_versal/INTF0_TX${c}_ch_$pin] }
+            connect_bd_net {*}$pins
+        }
     }
     current_bd_instance /
 }
