@@ -82,6 +82,17 @@ public:
         write(CTRL, ctrl_after);
         return wait_reset_done(2000);
     }
+    // Reset only the RX datapath (CDR, elastic buffer, PCS) and keep the rest of CTRL. Done while
+    // the far end already sends, so the receivers start on live data: a quad reset restarts TX and
+    // RX together, and over fibre a receiver that came up before its signal could stay unable to
+    // deliver data behind the GT PRBS checker (one quad never locked in 08, 2026-10-22).
+    bool reset_rx() const {
+        const uint32_t ctrl = read(CTRL);
+        write(CTRL, ctrl | 0x10);
+        sleep_ms(1);
+        write(CTRL, ctrl);
+        return wait_reset_done(2000);
+    }
     void reset_prbs_counters() const {
         write(PRBS_CTRL, 0x1);
         sleep_ms(1);
@@ -129,14 +140,18 @@ inline std::vector<Quad> find_quads(Bar4 &bar) {
     return q;
 }
 
-// GT PRBS-31 on all lanes of the given quads, then RX polarity search: lanes that do not lock get
-// their RX polarity inverted and are checked again. Returns per quad the lanes that locked.
-inline std::vector<uint32_t> prbs31_lock_with_polarity(const std::vector<Quad> &quads, int settle_ms = 50) {
+// GT PRBS-31 on all lanes of the given quads, the RX datapaths restarted on that live data, then
+// RX polarity search: lanes that do not lock get their RX polarity inverted and are checked again;
+// lanes that lock with neither get one more, longer wait at normal polarity (some lanes need more
+// than 100 ms after a reset). Returns per quad the lanes that locked.
+inline std::vector<uint32_t> prbs31_lock_with_polarity(const std::vector<Quad> &quads, int settle_ms = 100) {
     for (const auto &q : quads) {
         q.write(POLARITY, 0);
         q.write(TX_PRBS, PRBS31_ALL);
         q.write(RX_PRBS, PRBS31_ALL);
     }
+    sleep_ms(settle_ms);
+    for (const auto &q : quads) q.reset_rx();
     sleep_ms(settle_ms);
     for (const auto &q : quads) q.reset_prbs_counters();
     sleep_ms(settle_ms);
@@ -154,12 +169,19 @@ inline std::vector<uint32_t> prbs31_lock_with_polarity(const std::vector<Quad> &
     sleep_ms(settle_ms);
     for (const auto &q : quads) q.reset_prbs_counters();
     sleep_ms(settle_ms);
+    bool slow = false;
     for (size_t i = 0; i < quads.size(); ++i) {
         const uint32_t miss = ~locked[i] & 0xF;
         const uint32_t now = quads[i].locks();
         locked[i] |= now & miss;
         quads[i].write(POLARITY, (now & miss) << 4);  // keep inversion only where it helped
+        slow = slow || (locked[i] != 0xF);
     }
+    if (!slow) return locked;
+    sleep_ms(5 * settle_ms);
+    for (const auto &q : quads) q.reset_prbs_counters();
+    sleep_ms(settle_ms);
+    for (size_t i = 0; i < quads.size(); ++i) locked[i] |= quads[i].locks();
     return locked;
 }
 
