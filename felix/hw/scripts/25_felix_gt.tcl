@@ -36,7 +36,8 @@ set ::felix_refclk_pins {
 # splitters choose between CLK0 (the 156.25 MHz Si570) and CLK1 (not connected) with CLK_SEL,
 # which comes from these FPGA pins through a level shifter: left floating (bank unused), the
 # splitters pass noise. si53344_sel = 0 selects the Si570. Using the bank pulls its unused pins
-# low, so the I2C mux reset (BP40) is driven high (i2c_mux_rst_b = 1), as in the FELIX firmware.
+# low, so the I2C mux reset (BP40) is driven by felix_board_io: low once after configuration (and
+# on host request), high otherwise, as in the FELIX firmware.
 # Bank 703 (1.5 V, schematic pp.31, 46-49): reset, I2C select, present and interrupt of the
 # FireFly 1/2 TX and RX modules (bit order FF1 TX, FF1 RX, FF2 TX, FF2 RX), driven as in the FELIX
 # firmware. FireFly 6 and the two I/O expander resets share the bank and would be pulled low, so
@@ -215,7 +216,7 @@ proc felix_gt_build {} {
     set b [create_bd_cell -type module -reference felix_board_io board_io]
     foreach {port dir width} {ff_rst_b O 4 ff_sel_b O 4 ff_prsnt_b I 4 ff_intr_b I 4
                               ff6_rst_b O 1 ff6_sel_b O 1 ff6_prsnt_b I 1 ff6_intr_b I 1
-                              ioexp_rst_b O 2 ioexp_intr_b I 2} {
+                              ioexp_rst_b O 2 ioexp_intr_b I 2 i2c_mux_rst_b O 1} {
         if {$width > 1} {
             create_bd_port -dir $dir -from [expr {$width - 1}] -to 0 $port
         } else {
@@ -230,13 +231,9 @@ proc felix_gt_build {} {
     felix_gt_assign board_io/s_axi/reg0 0x20400078000 32K
 
     create_bd_port -dir O -from 1 -to 0 si53344_sel
-    create_bd_port -dir O i2c_mux_rst_b
     set c0 [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 si53344_sel_const]
     set_property -dict {CONFIG.CONST_WIDTH {2} CONFIG.CONST_VAL {0}} $c0
-    set c1 [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 i2c_mux_rst_b_const]
-    set_property -dict {CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {1}} $c1
     connect_bd_net [get_bd_pins si53344_sel_const/dout] [get_bd_ports si53344_sel]
-    connect_bd_net [get_bd_pins i2c_mux_rst_b_const/dout] [get_bd_ports i2c_mux_rst_b]
 
     set k 0
     foreach bank $::felix_gt_quads {

@@ -197,13 +197,23 @@ module felix_gt_quad_if #(
     always @(posedge rx_usrclk) rx_rst <= !rx_done_s || rx_ctl[21];
 
     // ---------------- lane adapters ----------------
+    // A register stage sits between each adapter and its NoC stream cell: without it the adapter
+    // FIFO memories connect straight to the NoC pins and these paths had no timing margin.
     wire [63:0] tx0, tx1, tx2, tx3;
     wire [31:0] tx_beats, tx_underflows, rx_beats, rx_drops;
+    wire [511:0] tx_data, rx_data;
+    wire         tx_valid, tx_ready, rx_valid, rx_ready;
+
+    // The TX stage is never reset: hold and GT-not-ready are handled by the adapter behind it.
+    felix_axis_reg tx_reg (
+        .clk(tx_usrclk), .rst(1'b0),
+        .s_tdata(s_axis_tx_tdata), .s_tvalid(s_axis_tx_tvalid), .s_tready(s_axis_tx_tready),
+        .m_tdata(tx_data), .m_tvalid(tx_valid), .m_tready(tx_ready));
 
     felix_gt_tx_adapter tx_adapter (
         .clk(tx_usrclk), .rst(tx_rst), .drop(tx_drop),
-        .s_axis_tdata(s_axis_tx_tdata), .s_axis_tkeep(s_axis_tx_tkeep), .s_axis_tlast(s_axis_tx_tlast),
-        .s_axis_tvalid(s_axis_tx_tvalid), .s_axis_tready(s_axis_tx_tready),
+        .s_axis_tdata(tx_data), .s_axis_tkeep({64{1'b1}}), .s_axis_tlast(1'b1),
+        .s_axis_tvalid(tx_valid), .s_axis_tready(tx_ready),
         .txdata0(tx0), .txdata1(tx1), .txdata2(tx2), .txdata3(tx3),
         .beat_count(tx_beats), .underflow_count(tx_underflows));
 
@@ -215,9 +225,15 @@ module felix_gt_quad_if #(
     felix_gt_rx_adapter rx_adapter (
         .clk(rx_usrclk), .rst(rx_rst),
         .rxdata0(rxdata0[63:0]), .rxdata1(rxdata1[63:0]), .rxdata2(rxdata2[63:0]), .rxdata3(rxdata3[63:0]),
-        .m_axis_tdata(m_axis_rx_tdata), .m_axis_tkeep(m_axis_rx_tkeep), .m_axis_tlast(m_axis_rx_tlast),
-        .m_axis_tvalid(m_axis_rx_tvalid), .m_axis_tready(m_axis_rx_tready),
+        .m_axis_tdata(rx_data), .m_axis_tkeep(m_axis_rx_tkeep), .m_axis_tlast(m_axis_rx_tlast),
+        .m_axis_tvalid(rx_valid), .m_axis_tready(rx_ready),
         .beat_count(rx_beats), .drop_count(rx_drops));
+
+    // Reset with the adapter, so a held quad sends nothing into the NoC (as before)
+    felix_axis_reg rx_reg (
+        .clk(rx_usrclk), .rst(rx_rst),
+        .s_tdata(rx_data), .s_tvalid(rx_valid), .s_tready(rx_ready),
+        .m_tdata(m_axis_rx_tdata), .m_tvalid(m_axis_rx_tvalid), .m_tready(m_axis_rx_tready));
 
     // ---------------- counters into s_axi_aclk ----------------
     reg [31:0] tx_cycles = 32'd0;

@@ -25,6 +25,13 @@ inject_boot_device_pcie $_od
 
 write_abstract_shell -cell top_i/slash -force [file join $_od static_shell_slash.dcp]
 report_timing_summary -delay_type min_max -max_paths 1 -file [file join $_od report_timing_summary_static.txt]
+# A shell that misses timing is not staged: a 13 ps miss on a GT path corrupted data on the card.
+set _wns [get_property SLACK [get_timing_paths -setup -max_paths 1 -nworst 1]]
+set _whs [get_property SLACK [get_timing_paths -hold -max_paths 1 -nworst 1]]
+if {$_wns < 0 || $_whs < 0} {
+    error "TIMING NOT MET: WNS $_wns ns, WHS $_whs ns (see report_timing_summary_static.txt)"
+}
+puts "TIMING MET: WNS $_wns ns, WHS $_whs ns"
 
 write_hw_platform -fixed -include_bit -force [file join $_od felix_slash.xsa]
 
